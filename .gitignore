@@ -1,0 +1,85 @@
+# =========================
+# Python / virtualenv
+# =========================
+.venv/
+.venv_build/
+venv/
+env/
+ENV/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# =========================
+# Build / packaging
+# =========================
+build/
+dist/
+out/
+release/
+debug/
+*.manifest
+*.pkg
+
+# PyInstaller
+*.pyz
+
+# =========================
+# Test / tooling caches
+# =========================
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+coverage/
+
+# =========================
+# Type checker / notebooks
+# =========================
+.ipynb_checkpoints/
+
+# =========================
+# Local databases / exports
+# =========================
+*.sqlite
+*.sqlite3
+*.db
+*_tables/
+
+# =========================
+# Logs / temp / backups
+# =========================
+*.log
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+~$*
+
+# =========================
+# OS / editor files
+# =========================
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# VS Code / JetBrains
+.vscode/
+.idea/
+
+# =========================
+# Local secrets / env files
+# =========================
+.env
+.env.*
+
+# =========================
+# User-generated binary results
+# (keep source assets manually if needed)
+# =========================
+*.pyd
