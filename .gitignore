@@ -7,6 +7,7 @@ venv/
 env/
 ENV/
 __pycache__/
+**/__pycache__/
 *.py[cod]
 *$py.class
 
@@ -20,9 +21,8 @@ release/
 debug/
 *.manifest
 *.pkg
-
-# PyInstaller
 *.pyz
+*.toc
 
 # =========================
 # Test / tooling caches
@@ -38,7 +38,7 @@ htmlcov/
 coverage/
 
 # =========================
-# Type checker / notebooks
+# Notebooks / temp
 # =========================
 .ipynb_checkpoints/
 
@@ -79,7 +79,14 @@ Desktop.ini
 .env.*
 
 # =========================
-# User-generated binary results
-# (keep source assets manually if needed)
+# User data / attachments
+# =========================
+uploads/
+*.zip
+*.rar
+*.7z
+
+# =========================
+# Binary python extensions
 # =========================
 *.pyd
