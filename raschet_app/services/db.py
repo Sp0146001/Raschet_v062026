@@ -23,6 +23,12 @@ DB_TABLES = [
     "segment_labels",
     "segment_channels",
     "segment_points",
+    "preprocess_profiles",
+    "preprocessed_runs",
+    "preprocessed_channels",
+    "preprocessed_points",
+    "feature_sets",
+    "feature_values",
 ]
 
 
@@ -151,6 +157,66 @@ class ProjectDatabase:
                 time REAL NOT NULL,
                 resistance REAL NOT NULL,
                 FOREIGN KEY (segment_id) REFERENCES segments(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS preprocess_profiles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                profile_name TEXT NOT NULL,
+                pipeline_json TEXT NOT NULL,
+                created_at TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS preprocessed_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                segment_id INTEGER NOT NULL,
+                profile_id INTEGER,
+                reference_segment_id INTEGER,
+                run_name TEXT,
+                created_at TEXT,
+                profile_json TEXT,
+                FOREIGN KEY (segment_id) REFERENCES segments(id) ON DELETE CASCADE,
+                FOREIGN KEY (profile_id) REFERENCES preprocess_profiles(id) ON DELETE SET NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS preprocessed_channels (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id INTEGER NOT NULL,
+                channel_index INTEGER NOT NULL,
+                channel_name TEXT,
+                FOREIGN KEY (run_id) REFERENCES preprocessed_runs(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS preprocessed_points (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id INTEGER NOT NULL,
+                channel_index INTEGER NOT NULL,
+                time REAL NOT NULL,
+                resistance REAL NOT NULL,
+                FOREIGN KEY (run_id) REFERENCES preprocessed_runs(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS feature_sets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                feature_set_name TEXT NOT NULL,
+                segment_id INTEGER,
+                run_id INTEGER,
+                profile_id INTEGER,
+                source_kind TEXT,
+                created_at TEXT,
+                note TEXT,
+                FOREIGN KEY (segment_id) REFERENCES segments(id) ON DELETE SET NULL,
+                FOREIGN KEY (run_id) REFERENCES preprocessed_runs(id) ON DELETE SET NULL,
+                FOREIGN KEY (profile_id) REFERENCES preprocess_profiles(id) ON DELETE SET NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS feature_values (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                feature_set_id INTEGER NOT NULL,
+                channel_index INTEGER NOT NULL,
+                channel_name TEXT,
+                feature_key TEXT,
+                feature_value REAL,
+                FOREIGN KEY (feature_set_id) REFERENCES feature_sets(id) ON DELETE CASCADE
             );
             """
         )
@@ -453,7 +519,7 @@ class ProjectDatabase:
         assert self.conn is not None
         views: Dict[str, pd.DataFrame] = {}
         views["Исходные_файлы"] = pd.read_sql_query(
-            "SELECT id AS 'ID файла', file_name AS 'Файл', row_count AS 'Строк', channel_count AS 'Каналов' FROM source_files ORDER BY id",
+            "SELECT id AS 'ID файла', file_name AS 'Файл', file_path AS 'Источник', row_count AS 'Строк', channel_count AS 'Каналов' FROM source_files ORDER BY id",
             self.conn,
         )
         views["Каналы_файлов"] = pd.read_sql_query(
@@ -484,6 +550,46 @@ class ProjectDatabase:
             "SELECT segment_id AS 'ID сегмента', channel_index AS '№ канала', time AS 'Время, s', resistance AS 'Сопротивление, Ohm' FROM segment_points ORDER BY segment_id, channel_index, time",
             self.conn,
         )
+        views["Профили_предобработки"] = pd.read_sql_query(
+            "SELECT id AS 'ID профиля', profile_name AS 'Профиль', pipeline_json AS 'Pipeline JSON' FROM preprocess_profiles ORDER BY id",
+            self.conn,
+        )
+        views["Запуски_предобработки"] = pd.read_sql_query(
+            """
+            SELECT r.id AS 'ID запуска', r.run_name AS 'Название', r.segment_id AS 'ID сегмента', s.segment_name AS 'Сегмент',
+                   r.profile_id AS 'ID профиля', p.profile_name AS 'Профиль', r.reference_segment_id AS 'ID референса', r.profile_json AS 'Pipeline JSON'
+            FROM preprocessed_runs r
+            LEFT JOIN segments s ON s.id = r.segment_id
+            LEFT JOIN preprocess_profiles p ON p.id = r.profile_id
+            ORDER BY r.id
+            """,
+            self.conn,
+        )
+        views["Каналы_предобработки"] = pd.read_sql_query(
+            "SELECT run_id AS 'ID запуска', channel_index AS '№ канала', channel_name AS 'Имя канала' FROM preprocessed_channels ORDER BY run_id, channel_index",
+            self.conn,
+        )
+        views["Точки_предобработки"] = pd.read_sql_query(
+            "SELECT run_id AS 'ID запуска', channel_index AS '№ канала', time AS 'Время, s', resistance AS 'Значение' FROM preprocessed_points ORDER BY run_id, channel_index, time",
+            self.conn,
+        )
+        views["Наборы_признаков"] = pd.read_sql_query(
+            """
+            SELECT f.id AS 'ID набора', f.feature_set_name AS 'Набор признаков', f.segment_id AS 'ID сегмента', s.segment_name AS 'Сегмент',
+                   f.run_id AS 'ID запуска', r.run_name AS 'Результат предобработки', f.profile_id AS 'ID профиля', p.profile_name AS 'Профиль',
+                   f.source_kind AS 'Источник признаков', f.created_at AS 'Создан', f.note AS 'Комментарий'
+            FROM feature_sets f
+            LEFT JOIN segments s ON s.id = f.segment_id
+            LEFT JOIN preprocessed_runs r ON r.id = f.run_id
+            LEFT JOIN preprocess_profiles p ON p.id = f.profile_id
+            ORDER BY f.id
+            """,
+            self.conn,
+        )
+        views["Значения_признаков"] = pd.read_sql_query(
+            "SELECT feature_set_id AS 'ID набора', channel_index AS '№ канала', channel_name AS 'Имя канала', feature_key AS 'Признак', feature_value AS 'Значение' FROM feature_values ORDER BY feature_set_id, channel_index, feature_key",
+            self.conn,
+        )
         return views
 
     def _normalize_import_bundle(self, data: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
@@ -491,6 +597,7 @@ class ProjectDatabase:
             "Исходные_файлы": {
                 "ID файла": "id",
                 "Файл": "file_name",
+                "Источник": "file_path",
                 "Строк": "row_count",
                 "Каналов": "channel_count",
             },
@@ -531,19 +638,71 @@ class ProjectDatabase:
                 "Время, s": "time",
                 "Сопротивление, Ohm": "resistance",
             },
+            "Профили_предобработки": {
+                "ID профиля": "id",
+                "Профиль": "profile_name",
+                "Pipeline JSON": "pipeline_json",
+            },
+            "Запуски_предобработки": {
+                "ID запуска": "id",
+                "Название": "run_name",
+                "ID сегмента": "segment_id",
+                "Сегмент": "segment_name",
+                "ID профиля": "profile_id",
+                "Профиль": "profile_name",
+                "ID референса": "reference_segment_id",
+                "Pipeline JSON": "profile_json",
+            },
+            "Каналы_предобработки": {
+                "ID запуска": "run_id",
+                "№ канала": "channel_index",
+                "Имя канала": "channel_name",
+            },
+            "Точки_предобработки": {
+                "ID запуска": "run_id",
+                "№ канала": "channel_index",
+                "Время, s": "time",
+                "Значение": "resistance",
+            },
+            "Наборы_признаков": {
+                "ID набора": "id",
+                "Набор признаков": "feature_set_name",
+                "ID сегмента": "segment_id",
+                "Сегмент": "segment_name",
+                "ID запуска": "run_id",
+                "Результат предобработки": "run_name",
+                "ID профиля": "profile_id",
+                "Профиль": "profile_name",
+                "Источник признаков": "source_kind",
+                "Создан": "created_at",
+                "Комментарий": "note",
+            },
+            "Значения_признаков": {
+                "ID набора": "feature_set_id",
+                "№ канала": "channel_index",
+                "Имя канала": "channel_name",
+                "Признак": "feature_key",
+                "Значение": "feature_value",
+            },
+        }
+        normalized_names = {
+            "Исходные_файлы": "source_files",
+            "Каналы_файлов": "source_channels",
+            "Точки_файлов": "source_points",
+            "Сегменты": "segments",
+            "Каналы_сегментов": "segment_channels",
+            "Точки_сегментов": "segment_points",
+            "Профили_предобработки": "preprocess_profiles",
+            "Запуски_предобработки": "preprocessed_runs",
+            "Каналы_предобработки": "preprocessed_channels",
+            "Точки_предобработки": "preprocessed_points",
+            "Наборы_признаков": "feature_sets",
+            "Значения_признаков": "feature_values",
         }
         normalized: Dict[str, pd.DataFrame] = {}
         for key, df in data.items():
             if key in mapping:
-                normalized_name = {
-                    "Исходные_файлы": "source_files",
-                    "Каналы_файлов": "source_channels",
-                    "Точки_файлов": "source_points",
-                    "Сегменты": "segments",
-                    "Каналы_сегментов": "segment_channels",
-                    "Точки_сегментов": "segment_points",
-                }[key]
-                normalized[normalized_name] = df.rename(columns=mapping[key])
+                normalized[normalized_names[key]] = df.rename(columns=mapping[key])
             else:
                 normalized[key] = df
         return normalized
@@ -687,7 +846,353 @@ class ProjectDatabase:
                     ),
                 )
 
+            profile_map: Dict[int, int] = {}
+            for _, row in data.get("preprocess_profiles", pd.DataFrame()).iterrows():
+                cur = self.conn.execute(
+                    "INSERT INTO preprocess_profiles(profile_name, pipeline_json, created_at) VALUES (?, ?, ?)",
+                    (
+                        row.get("profile_name", ""),
+                        row.get("pipeline_json", "{}"),
+                        row.get("created_at", datetime.now().isoformat(timespec="seconds")),
+                    ),
+                )
+                profile_map[int(row.get("id", len(profile_map) + 1))] = int(cur.lastrowid)
+
+            run_map: Dict[int, int] = {}
+            for _, row in data.get("preprocessed_runs", pd.DataFrame()).iterrows():
+                old_segment = row.get("segment_id")
+                mapped_segment = segment_map.get(int(old_segment)) if pd.notna(old_segment) else None
+                old_profile = row.get("profile_id")
+                mapped_profile = profile_map.get(int(old_profile)) if pd.notna(old_profile) else None
+                old_ref = row.get("reference_segment_id")
+                mapped_ref = segment_map.get(int(old_ref)) if pd.notna(old_ref) else None
+                cur = self.conn.execute(
+                    """
+                    INSERT INTO preprocessed_runs(segment_id, profile_id, reference_segment_id, run_name, created_at, profile_json)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        mapped_segment,
+                        mapped_profile,
+                        mapped_ref,
+                        row.get("run_name", ""),
+                        row.get("created_at", datetime.now().isoformat(timespec="seconds")),
+                        row.get("profile_json", "{}"),
+                    ),
+                )
+                run_map[int(row.get("id", len(run_map) + 1))] = int(cur.lastrowid)
+
+            for _, row in data.get("preprocessed_channels", pd.DataFrame()).iterrows():
+                old_run = int(row.get("run_id"))
+                if old_run not in run_map:
+                    continue
+                self.conn.execute(
+                    "INSERT INTO preprocessed_channels(run_id, channel_index, channel_name) VALUES (?, ?, ?)",
+                    (run_map[old_run], int(row.get("channel_index", 0)), row.get("channel_name", "")),
+                )
+
+            for _, row in data.get("preprocessed_points", pd.DataFrame()).iterrows():
+                old_run = int(row.get("run_id"))
+                if old_run not in run_map:
+                    continue
+                self.conn.execute(
+                    "INSERT INTO preprocessed_points(run_id, channel_index, time, resistance) VALUES (?, ?, ?, ?)",
+                    (
+                        run_map[old_run],
+                        int(row.get("channel_index", 0)),
+                        float(row.get("time", 0.0)),
+                        float(row.get("resistance", 0.0)),
+                    ),
+                )
+
+            feature_set_map: Dict[int, int] = {}
+            for _, row in data.get("feature_sets", pd.DataFrame()).iterrows():
+                old_segment = row.get("segment_id")
+                mapped_segment = segment_map.get(int(old_segment)) if pd.notna(old_segment) else None
+                old_run = row.get("run_id")
+                mapped_run = run_map.get(int(old_run)) if pd.notna(old_run) else None
+                old_profile = row.get("profile_id")
+                mapped_profile = profile_map.get(int(old_profile)) if pd.notna(old_profile) else None
+                cur = self.conn.execute(
+                    """
+                    INSERT INTO feature_sets(feature_set_name, segment_id, run_id, profile_id, source_kind, created_at, note)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        row.get("feature_set_name", ""),
+                        mapped_segment,
+                        mapped_run,
+                        mapped_profile,
+                        row.get("source_kind", "segment"),
+                        row.get("created_at", datetime.now().isoformat(timespec="seconds")),
+                        row.get("note", ""),
+                    ),
+                )
+                feature_set_map[int(row.get("id", len(feature_set_map) + 1))] = int(cur.lastrowid)
+
+            for _, row in data.get("feature_values", pd.DataFrame()).iterrows():
+                old_feature_set = int(row.get("feature_set_id"))
+                if old_feature_set not in feature_set_map:
+                    continue
+                self.conn.execute(
+                    "INSERT INTO feature_values(feature_set_id, channel_index, channel_name, feature_key, feature_value) VALUES (?, ?, ?, ?, ?)",
+                    (
+                        feature_set_map[old_feature_set],
+                        int(row.get("channel_index", 0)),
+                        row.get("channel_name", ""),
+                        row.get("feature_key", ""),
+                        float(row.get("feature_value", 0.0)),
+                    ),
+                )
+
     def delete_segment(self, segment_id: int) -> None:
         assert self.conn is not None
         self.conn.execute("DELETE FROM segments WHERE id=?", (segment_id,))
         self.conn.commit()
+
+    # --------------------------------------------------------- preprocess profiles / runs
+    def save_preprocess_profile(self, profile_name: str, pipeline_json: str) -> int:
+        assert self.conn is not None
+        cur = self.conn.execute(
+            "INSERT INTO preprocess_profiles(profile_name, pipeline_json, created_at) VALUES (?, ?, ?)",
+            (profile_name, pipeline_json, datetime.now().isoformat(timespec="seconds")),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def update_preprocess_profile(self, profile_id: int, profile_name: str, pipeline_json: str) -> None:
+        assert self.conn is not None
+        self.conn.execute(
+            "UPDATE preprocess_profiles SET profile_name=?, pipeline_json=? WHERE id=?",
+            (profile_name, pipeline_json, profile_id),
+        )
+        self.conn.commit()
+
+    def list_preprocess_profiles(self) -> pd.DataFrame:
+        if not self.is_open():
+            return pd.DataFrame()
+        assert self.conn is not None
+        return pd.read_sql_query(
+            "SELECT id, profile_name, pipeline_json, created_at FROM preprocess_profiles ORDER BY id DESC",
+            self.conn,
+        )
+
+    def load_preprocess_profile(self, profile_id: int) -> Dict[str, object]:
+        assert self.conn is not None
+        row = self.conn.execute("SELECT * FROM preprocess_profiles WHERE id=?", (profile_id,)).fetchone()
+        if row is None:
+            raise ValueError("Профиль предобработки не найден.")
+        return {"id": int(row["id"]), "profile_name": row["profile_name"], "pipeline_json": row["pipeline_json"]}
+
+    def delete_preprocess_profile(self, profile_id: int) -> None:
+        assert self.conn is not None
+        self.conn.execute("DELETE FROM preprocess_profiles WHERE id=?", (profile_id,))
+        self.conn.commit()
+
+    def save_preprocessed_run(
+        self,
+        segment_id: int,
+        run_name: str,
+        profile_json: str,
+        channels: Iterable[ChannelData],
+        profile_id: Optional[int] = None,
+        reference_segment_id: Optional[int] = None,
+    ) -> int:
+        assert self.conn is not None
+        channels = list(channels)
+        cur = self.conn.execute(
+            """
+            INSERT INTO preprocessed_runs(segment_id, profile_id, reference_segment_id, run_name, created_at, profile_json)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                segment_id,
+                profile_id,
+                reference_segment_id,
+                run_name,
+                datetime.now().isoformat(timespec="seconds"),
+                profile_json,
+            ),
+        )
+        run_id = int(cur.lastrowid)
+        self.conn.executemany(
+            "INSERT INTO preprocessed_channels(run_id, channel_index, channel_name) VALUES (?, ?, ?)",
+            [(run_id, ch.index, ch.display_name) for ch in channels],
+        )
+        point_rows = []
+        for ch in channels:
+            point_rows.extend((run_id, ch.index, float(t), float(r)) for t, r in zip(ch.time, ch.resistance))
+        self.conn.executemany(
+            "INSERT INTO preprocessed_points(run_id, channel_index, time, resistance) VALUES (?, ?, ?, ?)",
+            point_rows,
+        )
+        self.conn.commit()
+        return run_id
+
+    def list_preprocessed_runs(self) -> pd.DataFrame:
+        if not self.is_open():
+            return pd.DataFrame()
+        assert self.conn is not None
+        return pd.read_sql_query(
+            """
+            SELECT r.id, r.run_name, r.segment_id, s.segment_name, r.profile_id, p.profile_name, r.reference_segment_id, r.created_at
+            FROM preprocessed_runs r
+            LEFT JOIN segments s ON s.id = r.segment_id
+            LEFT JOIN preprocess_profiles p ON p.id = r.profile_id
+            ORDER BY r.id DESC
+            """,
+            self.conn,
+        )
+
+    def load_preprocessed_run(self, run_id: int) -> ParsedFile:
+        assert self.conn is not None
+        row = self.conn.execute(
+            "SELECT r.*, s.segment_name FROM preprocessed_runs r LEFT JOIN segments s ON s.id=r.segment_id WHERE r.id=?",
+            (run_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError("Предобработанный результат не найден.")
+        ch_df = pd.read_sql_query(
+            "SELECT channel_index, channel_name FROM preprocessed_channels WHERE run_id=? ORDER BY channel_index",
+            self.conn,
+            params=(run_id,),
+        )
+        pt_df = pd.read_sql_query(
+            "SELECT channel_index, time, resistance FROM preprocessed_points WHERE run_id=? ORDER BY channel_index, time",
+            self.conn,
+            params=(run_id,),
+        )
+        channels: List[ChannelData] = []
+        for _, ch in ch_df.iterrows():
+            sub = pt_df[pt_df["channel_index"] == ch["channel_index"]]
+            channels.append(
+                ChannelData(
+                    index=int(ch["channel_index"]),
+                    original_name=str(ch["channel_name"]),
+                    display_name=str(ch["channel_name"]),
+                    time=sub["time"].to_numpy(dtype=float),
+                    resistance=sub["resistance"].to_numpy(dtype=float),
+                    color=DEFAULT_COLORS[int(ch["channel_index"]) % len(DEFAULT_COLORS)],
+                )
+            )
+        notes = ["Предобработанный результат", f"Профиль JSON: {row['profile_json']}"]
+        return ParsedFile(
+            file_path=Path(f"preprocessed_run_{run_id}"),
+            file_name=row["run_name"] or f"preprocessed_run_{run_id}",
+            metadata_lines=[f"segment: {row['segment_name'] or ''}"] if row['segment_name'] else [],
+            metadata={},
+            channels=channels,
+            raw_row_count=sum(len(ch.time) for ch in channels),
+            column_count=len(channels) * 2,
+            notes=notes,
+        )
+
+    def save_feature_set(
+        self,
+        feature_set_name: str,
+        features_long: pd.DataFrame,
+        segment_id: Optional[int] = None,
+        run_id: Optional[int] = None,
+        profile_id: Optional[int] = None,
+        source_kind: str = "segment",
+        note: str = "",
+    ) -> int:
+        assert self.conn is not None
+        cur = self.conn.execute(
+            """
+            INSERT INTO feature_sets(feature_set_name, segment_id, run_id, profile_id, source_kind, created_at, note)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                feature_set_name,
+                segment_id,
+                run_id,
+                profile_id,
+                source_kind,
+                datetime.now().isoformat(timespec="seconds"),
+                note,
+            ),
+        )
+        feature_set_id = int(cur.lastrowid)
+        rows = [
+            (
+                feature_set_id,
+                int(row["channel_index"]),
+                row["channel_name"],
+                row["feature_key"],
+                float(row["feature_value"]),
+            )
+            for _, row in features_long.iterrows()
+        ]
+        self.conn.executemany(
+            "INSERT INTO feature_values(feature_set_id, channel_index, channel_name, feature_key, feature_value) VALUES (?, ?, ?, ?, ?)",
+            rows,
+        )
+        self.conn.commit()
+        return feature_set_id
+
+    def list_feature_sets(self) -> pd.DataFrame:
+        if not self.is_open():
+            return pd.DataFrame()
+        assert self.conn is not None
+        return pd.read_sql_query(
+            """
+            SELECT f.id, f.feature_set_name, f.segment_id, s.segment_name, f.run_id, r.run_name, f.profile_id, p.profile_name,
+                   f.source_kind, f.created_at, f.note,
+                   l.gas_name, l.concentration_ppm, l.temperature_c, l.light_mode
+            FROM feature_sets f
+            LEFT JOIN segments s ON s.id = f.segment_id
+            LEFT JOIN segment_labels l ON l.segment_id = s.id
+            LEFT JOIN preprocessed_runs r ON r.id = f.run_id
+            LEFT JOIN preprocess_profiles p ON p.id = f.profile_id
+            ORDER BY f.id DESC
+            """,
+            self.conn,
+        )
+
+    def load_feature_set_values(self, feature_set_id: int) -> pd.DataFrame:
+        assert self.conn is not None
+        long_df = pd.read_sql_query(
+            "SELECT channel_index, channel_name, feature_key, feature_value FROM feature_values WHERE feature_set_id=? ORDER BY channel_index, feature_key",
+            self.conn,
+            params=(feature_set_id,),
+        )
+        if long_df.empty:
+            return long_df
+        wide = long_df.pivot_table(index=["channel_index", "channel_name"], columns="feature_key", values="feature_value", aggfunc="first").reset_index()
+        wide.columns.name = None
+        return wide
+
+    def load_feature_matrix(self, feature_set_ids: List[int]) -> Tuple[pd.DataFrame, pd.DataFrame]:
+        assert self.conn is not None
+        if not feature_set_ids:
+            return pd.DataFrame(), pd.DataFrame()
+        placeholders = ",".join(["?"] * len(feature_set_ids))
+        meta_df = pd.read_sql_query(
+            f"""
+            SELECT f.id, f.feature_set_name, f.segment_id, s.segment_name, f.run_id, r.run_name, f.profile_id, p.profile_name,
+                   f.source_kind, f.created_at, f.note,
+                   l.gas_name, l.concentration_ppm, l.temperature_c, l.light_mode
+            FROM feature_sets f
+            LEFT JOIN segments s ON s.id = f.segment_id
+            LEFT JOIN segment_labels l ON l.segment_id = s.id
+            LEFT JOIN preprocessed_runs r ON r.id = f.run_id
+            LEFT JOIN preprocess_profiles p ON p.id = f.profile_id
+            WHERE f.id IN ({placeholders})
+            ORDER BY f.id
+            """,
+            self.conn,
+            params=feature_set_ids,
+        )
+        long_df = pd.read_sql_query(
+            f"SELECT feature_set_id, channel_name, feature_key, feature_value FROM feature_values WHERE feature_set_id IN ({placeholders})",
+            self.conn,
+            params=feature_set_ids,
+        )
+        if long_df.empty:
+            return meta_df, pd.DataFrame()
+        long_df["feature_name"] = long_df["channel_name"].astype(str) + "::" + long_df["feature_key"].astype(str)
+        wide_df = long_df.pivot_table(index="feature_set_id", columns="feature_name", values="feature_value", aggfunc="first")
+        wide_df.columns.name = None
+        wide_df = wide_df.reset_index().rename(columns={"feature_set_id": "id"})
+        return meta_df, wide_df

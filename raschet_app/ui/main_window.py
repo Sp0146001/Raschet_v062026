@@ -849,10 +849,11 @@ class RaschetMainWindow(QMainWindow):
                 columns={
                     "id": "ID",
                     "file_name": "Файл",
+                    "file_path": "Источник",
                     "row_count": "Строк",
                     "channel_count": "Каналов",
                 }
-            )[["ID", "Файл", "Строк", "Каналов"]]
+            )[["ID", "Файл", "Источник", "Строк", "Каналов"]]
         if not segments_df.empty:
             segments_df = segments_df.rename(
                 columns={
