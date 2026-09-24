@@ -17,6 +17,7 @@ def run_pca_pipeline(
     feature_df: pd.DataFrame,
     scale_mode: str,
     variance_threshold: float = 0.95,
+    min_components: int = 2,
 ) -> Dict[str, pd.DataFrame]:
     """Единый PCA pipeline.
 
@@ -25,7 +26,7 @@ def run_pca_pipeline(
     2. ковариационная матрица;
     3. собственные значения и собственные векторы;
     4. сортировка компонент по убыванию собственных значений;
-    5. выбор числа компонент по порогу дисперсии, минимум 2 PC при возможности;
+    5. выбор числа компонент по порогу дисперсии, минимум min_components PC при возможности;
     6. новая система координат;
     7. проекция объектов на новую систему координат.
     """
@@ -40,7 +41,7 @@ def run_pca_pipeline(
     covariance = compute_covariance_matrix(scaled_df)
     eigendecomposition = compute_eigendecomposition(covariance.matrix)
     sorted_components = sort_eigen_components_desc(eigendecomposition)
-    selection = select_components(sorted_components.eigenvalues, variance_threshold)
+    selection = select_components(sorted_components.eigenvalues, variance_threshold, min_components=min_components)
     new_coordinates = build_new_coordinate_system(sorted_components.eigenvectors, selection.n_components)
     projection = project_to_new_coordinates(covariance.centered_values, feature_df.index, new_coordinates.basis)
 

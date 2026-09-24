@@ -358,6 +358,8 @@ class RaschetMainWindow(QMainWindow):
         self.pca_scaling_combo.addItems(list(SCALE_MODES.keys()))
         self.pca_variance_threshold_label = QLabel("95 %")
         self.pca_variance_threshold_label.setStyleSheet("color:#333; font-weight:600;")
+        self.pca_view_mode_combo = QComboBox()
+        self.pca_view_mode_combo.addItems(["2D: PC1/PC2", "3D: PC1/PC2/PC3"])
         self.pca_refresh_btn = QPushButton("Обновить выборку")
         self.pca_refresh_btn.clicked.connect(self.refresh_feature_views)
         self.pca_run_btn = QPushButton("Рассчитать PCA")
@@ -368,8 +370,10 @@ class RaschetMainWindow(QMainWindow):
         filter_layout.addWidget(self.pca_scaling_combo, 0, 3)
         filter_layout.addWidget(QLabel("Порог дисперсии:"), 1, 0)
         filter_layout.addWidget(self.pca_variance_threshold_label, 1, 1)
-        filter_layout.addWidget(self.pca_refresh_btn, 1, 2)
-        filter_layout.addWidget(self.pca_run_btn, 1, 3)
+        filter_layout.addWidget(QLabel("Вид графика:"), 1, 2)
+        filter_layout.addWidget(self.pca_view_mode_combo, 1, 3)
+        filter_layout.addWidget(self.pca_refresh_btn, 2, 2)
+        filter_layout.addWidget(self.pca_run_btn, 2, 3)
         layout.addWidget(filter_box)
 
         self.features_sets_table = QTableWidget()
@@ -394,7 +398,7 @@ class RaschetMainWindow(QMainWindow):
         self.pca_plot_widget.getPlotItem().setLabel("left", "PC2")
         pca_graph_layout.addWidget(self.pca_plot_widget, stretch=1)
 
-        pca_legend_box = QGroupBox("Точки PCA")
+        pca_legend_box = QGroupBox("Легенда PCA по газу")
         pca_legend_layout = QVBoxLayout(pca_legend_box)
         self.pca_gas_legend_table = QTableWidget()
         TableUtils.setup_table(self.pca_gas_legend_table)
@@ -819,6 +823,8 @@ class RaschetMainWindow(QMainWindow):
         self.features_load_btn.setEnabled(project_open)
         self.pca_refresh_btn.setEnabled(project_open)
         self.pca_run_btn.setEnabled(project_open)
+        if hasattr(self, "pca_view_mode_combo"):
+            self.pca_view_mode_combo.setEnabled(project_open)
 
     def _all_channels_synced(self) -> List[ChannelData]:
         if not self.parsed:
@@ -1360,7 +1366,9 @@ class RaschetMainWindow(QMainWindow):
                 raise ValueError("Не удалось собрать матрицу признаков для PCA.")
             prepared = prepare_pca_input(feature_df)
             scale_mode = SCALE_MODES[self.pca_scaling_combo.currentText()]
-            result = run_pca(prepared.matrix, scale_mode, variance_threshold=0.95)
+            pca_mode = self.pca_view_mode_combo.currentText() if hasattr(self, "pca_view_mode_combo") else "2D: PC1/PC2"
+            min_components = 3 if pca_mode.startswith("3D") else 2
+            result = run_pca(prepared.matrix, scale_mode, variance_threshold=0.95, min_components=min_components)
         except Exception as exc:
             QMessageBox.critical(self, "PCA", f"Не удалось выполнить PCA:\n{exc}")
             return
@@ -1378,7 +1386,8 @@ class RaschetMainWindow(QMainWindow):
         self._plot_pca_scores(scores_df)
         self.analytics_tabs.setCurrentIndex(1)
         self.main_sections.setCurrentWidget(self.analytics_page)
-        self._set_status(f"PCA рассчитан. Подготовлено признаков: {prepared.matrix.shape[1]}, объектов: {len(scores_df)}.")
+        view_mode = self.pca_view_mode_combo.currentText() if hasattr(self, "pca_view_mode_combo") else "2D: PC1/PC2"
+        self._set_status(f"PCA рассчитан ({view_mode}). Подготовлено признаков: {prepared.matrix.shape[1]}, объектов: {len(scores_df)}.")
 
     def _populate_pca_gas_legend(self, rows: List[Dict[str, object]]) -> None:
         if not hasattr(self, "pca_gas_legend_table"):
@@ -1398,9 +1407,16 @@ class RaschetMainWindow(QMainWindow):
         self.pca_gas_legend_table.resizeColumnsToContents()
 
     def _plot_pca_scores(self, scores_df: pd.DataFrame) -> None:
+        mode = self.pca_view_mode_combo.currentText() if hasattr(self, "pca_view_mode_combo") else "2D: PC1/PC2"
+        if mode.startswith("3D"):
+            self._plot_pca_scores_3d(scores_df)
+        else:
+            self._plot_pca_scores_2d(scores_df)
+
+    def _plot_pca_scores_2d(self, scores_df: pd.DataFrame) -> None:
         self.pca_plot_widget.clear()
         plot_item = self.pca_plot_widget.getPlotItem()
-        plot_item.setTitle("PCA: проекция")
+        plot_item.setTitle("PCA: 2D-проекция PC1 / PC2")
         plot_item.setLabel("bottom", "PC1")
         plot_item.setLabel("left", "PC2")
         plot_item.showGrid(x=True, y=True, alpha=0.25)
@@ -1416,14 +1432,40 @@ class RaschetMainWindow(QMainWindow):
             x = sub["PC1"].to_numpy(dtype=float)
             y = sub[pc2_col].to_numpy(dtype=float) if pc2_col else [0.0] * len(sub)
             color = color_cycle[idx % len(color_cycle)]
-            scatter = pg.ScatterPlotItem(
-                x=x,
-                y=y,
-                pen=pg.mkPen(color, width=1.2),
-                brush=pg.mkBrush(color),
-                size=8,
-                name=str(label),
-            )
+            scatter = pg.ScatterPlotItem(x=x, y=y, pen=pg.mkPen(color, width=1.2), brush=pg.mkBrush(color), size=8)
+            plot_item.addItem(scatter)
+            legend_rows.append({"color": color, "gas": str(label), "count": len(sub)})
+        self._populate_pca_gas_legend(legend_rows)
+
+    def _plot_pca_scores_3d(self, scores_df: pd.DataFrame) -> None:
+        self.pca_plot_widget.clear()
+        plot_item = self.pca_plot_widget.getPlotItem()
+        plot_item.setTitle("PCA: 3D-представление PC1 / PC2 / PC3 (изометрическая проекция)")
+        plot_item.setLabel("bottom", "PC1 + проекция PC3")
+        plot_item.setLabel("left", "PC2 + проекция PC3")
+        plot_item.showGrid(x=True, y=True, alpha=0.25)
+        if scores_df.empty or "PC1" not in scores_df.columns:
+            self._populate_pca_gas_legend([])
+            return
+
+        pc2 = scores_df["PC2"].to_numpy(dtype=float) if "PC2" in scores_df.columns else [0.0] * len(scores_df)
+        pc3 = scores_df["PC3"].to_numpy(dtype=float) if "PC3" in scores_df.columns else [0.0] * len(scores_df)
+        z_min = float(min(pc3)) if len(pc3) else 0.0
+        z_max = float(max(pc3)) if len(pc3) else 0.0
+        z_span = z_max - z_min if z_max != z_min else 1.0
+
+        color_cycle = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"]
+        labels = scores_df["gas_name"].fillna("Без метки").replace("", "Без метки")
+        legend_rows: List[Dict[str, object]] = []
+        for idx, label in enumerate(sorted(labels.unique())):
+            sub = scores_df[labels == label].copy()
+            z = sub["PC3"].to_numpy(dtype=float) if "PC3" in sub.columns else [0.0] * len(sub)
+            x = sub["PC1"].to_numpy(dtype=float) + 0.55 * z
+            y_base = sub["PC2"].to_numpy(dtype=float) if "PC2" in sub.columns else [0.0] * len(sub)
+            y = y_base + 0.32 * z
+            sizes = [7.0 + 5.0 * ((float(value) - z_min) / z_span) for value in z]
+            color = color_cycle[idx % len(color_cycle)]
+            scatter = pg.ScatterPlotItem(x=x, y=y, pen=pg.mkPen(color, width=1.2), brush=pg.mkBrush(color), size=sizes)
             plot_item.addItem(scatter)
             legend_rows.append({"color": color, "gas": str(label), "count": len(sub)})
         self._populate_pca_gas_legend(legend_rows)
