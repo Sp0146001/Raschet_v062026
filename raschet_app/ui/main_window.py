@@ -45,7 +45,7 @@ from raschet_app.services.exporters import export_dataframe, export_plot
 from raschet_app.services.parser import SmartTxtParser
 from raschet_app.services.features import compute_channel_features
 from raschet_app.services.pca_analysis import SCALE_MODES, run_pca
-from raschet_app.services.preprocess import OPERATIONS, REFERENCE_OPERATIONS, algorithm_to_text, apply_preprocess_pipeline, parse_preprocess_algorithm, profile_to_json
+from raschet_app.services.preprocess import OPERATIONS, REFERENCE_OPERATIONS, algorithm_to_text, apply_preprocess_pipeline, parse_preprocess_algorithm, profile_from_json, profile_to_json
 from raschet_app.ui.channel_legend import ChannelLegendWidget
 from raschet_app.ui.graph_style_dialog import GraphStyleDialog
 from raschet_app.ui.plot_widget import FastPlotWidget
@@ -1264,9 +1264,12 @@ class RaschetMainWindow(QMainWindow):
             QMessageBox.information(self, "Признаки", "Сначала рассчитайте признаки.")
             return
         try:
-            payload = self.current_preprocessed_profile_payload or self._build_preprocess_profile_payload()
-            algorithm = str(payload.get("algorithm") or payload.get("profile_name") or "R").strip() or "R"
-            feature_set_name = f"{algorithm}_{self.current_feature_source_kind}_{self.current_feature_segment_id or 'unknown'}"
+            if self.current_feature_source_kind == "preprocessed_run":
+                payload = self.current_preprocessed_profile_payload or {}
+                algorithm = str(payload.get("algorithm") or payload.get("profile_name") or "R").strip() or "R"
+            else:
+                algorithm = "R"
+            feature_set_name = algorithm
             feature_set_id = self.db.save_feature_set(
                 feature_set_name=feature_set_name,
                 features_long=self.current_features_long_df,
@@ -1393,6 +1396,22 @@ class RaschetMainWindow(QMainWindow):
                 reference_parsed = self.db.load_segment(reference_id)
                 reference_channels = reference_parsed.channels
                 payload["reference_segment_id"] = reference_id
+
+            duplicate = self.db.find_preprocessed_run_duplicate(segment_id, operations, reference_id)
+            if duplicate is not None:
+                ref_text = f" с референсом ID={reference_id}" if reference_id is not None else ""
+                QMessageBox.information(
+                    self,
+                    "Предобработка",
+                    "Этот сегмент уже был обработан тем же алгоритмом"
+                    + ref_text
+                    + ".\n\n"
+                    + f"Найден сохранённый результат: ID={duplicate['id']}\n"
+                    + f"Название: {duplicate['run_name']}\n\n"
+                    + "Откройте существующий результат в таблице ниже или измените алгоритм.",
+                )
+                return
+
             processed_channels = apply_preprocess_pipeline(parsed.channels, payload, reference_channels=reference_channels)
         except Exception as exc:
             QMessageBox.critical(self, "Предобработка", f"Не удалось выполнить предобработку:\n{exc}")
@@ -1421,6 +1440,20 @@ class RaschetMainWindow(QMainWindow):
             QMessageBox.information(self, "Предобработка", "Сначала выполните предобработку выбранного сегмента.")
             return
         try:
+            operations = payload.get("operations", []) or []
+            reference_id = getattr(self, 'current_preprocessed_reference_id', None)
+            duplicate = self.db.find_preprocessed_run_duplicate(segment_id, operations, reference_id)
+            if duplicate is not None:
+                QMessageBox.information(
+                    self,
+                    "Предобработка",
+                    "Этот результат уже сохранён в БД.\n\n"
+                    + f"ID существующего результата: {duplicate['id']}\n"
+                    + f"Название: {duplicate['run_name']}",
+                )
+                self.refresh_preprocessing_views()
+                return
+
             algorithm = str(payload.get("algorithm") or payload.get("profile_name") or "R").strip() or "R"
             run_name = f"{algorithm}_segment_{segment_id}"
             run_id = self.db.save_preprocessed_run(
@@ -1429,7 +1462,7 @@ class RaschetMainWindow(QMainWindow):
                 profile_json=profile_to_json(payload),
                 channels=channels,
                 profile_id=None,
-                reference_segment_id=getattr(self, 'current_preprocessed_reference_id', None),
+                reference_segment_id=reference_id,
             )
             self.current_preprocessed_run_id = run_id
             self.refresh_preprocessing_views()
@@ -1455,9 +1488,19 @@ class RaschetMainWindow(QMainWindow):
             return
         self.current_preprocessed_run_id = run_id
         self.current_preprocessed_run_channels = parsed.channels
-        self.current_preprocessed_segment_id = None
-        self.current_preprocessed_reference_id = None
-        self.current_preprocessed_profile_payload = None
+        try:
+            self.current_preprocessed_segment_id = int(parsed.metadata.get("segment_id") or 0) or None
+        except Exception:
+            self.current_preprocessed_segment_id = None
+        try:
+            self.current_preprocessed_reference_id = int(parsed.metadata.get("reference_segment_id") or 0) or None
+        except Exception:
+            self.current_preprocessed_reference_id = None
+        try:
+            profile_json = str(parsed.metadata.get("profile_json") or "")
+            self.current_preprocessed_profile_payload = profile_from_json(profile_json) if profile_json else None
+        except Exception:
+            self.current_preprocessed_profile_payload = None
         self.current_segment_id = None
         self.current_source_file_id = None
         self.parsed = parsed

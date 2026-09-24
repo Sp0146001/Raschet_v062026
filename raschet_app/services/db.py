@@ -1037,6 +1037,47 @@ class ProjectDatabase:
         self.conn.execute("DELETE FROM preprocess_profiles WHERE id=?", (profile_id,))
         self.conn.commit()
 
+    def find_preprocessed_run_duplicate(
+        self,
+        segment_id: int,
+        operations: Iterable[str],
+        reference_segment_id: Optional[int] = None,
+    ) -> Optional[Dict[str, object]]:
+        if not self.is_open():
+            return None
+        assert self.conn is not None
+        target_operations = [str(op) for op in operations]
+        rows = self.conn.execute(
+            """
+            SELECT id, run_name, reference_segment_id, profile_json, created_at
+            FROM preprocessed_runs
+            WHERE segment_id = ?
+            ORDER BY id DESC
+            """,
+            (segment_id,),
+        ).fetchall()
+        for row in rows:
+            saved_ref = row["reference_segment_id"]
+            if saved_ref is not None:
+                saved_ref = int(saved_ref)
+            if saved_ref != reference_segment_id:
+                continue
+
+            saved_operations: List[str] = []
+            try:
+                payload = json.loads(row["profile_json"] or "{}")
+                saved_operations = [str(op) for op in (payload.get("operations") or [])]
+            except Exception:
+                saved_operations = []
+            if saved_operations == target_operations:
+                return {
+                    "id": int(row["id"]),
+                    "run_name": row["run_name"] or "",
+                    "reference_segment_id": saved_ref,
+                    "created_at": row["created_at"] or "",
+                }
+        return None
+
     def save_preprocessed_run(
         self,
         segment_id: int,
@@ -1123,12 +1164,23 @@ class ProjectDatabase:
                     color=DEFAULT_COLORS[int(ch["channel_index"]) % len(DEFAULT_COLORS)],
                 )
             )
-        notes = ["Предобработанный результат", f"Профиль JSON: {row['profile_json']}"]
+        profile_json = row["profile_json"] or ""
+        metadata = {
+            "segment_id": str(row["segment_id"] or ""),
+            "reference_segment_id": str(row["reference_segment_id"] or ""),
+            "profile_json": profile_json,
+        }
+        try:
+            payload = json.loads(profile_json) if profile_json else {}
+            metadata["algorithm"] = str(payload.get("algorithm") or payload.get("profile_name") or "")
+        except Exception:
+            metadata["algorithm"] = ""
+        notes = ["Предобработанный результат", f"Профиль JSON: {profile_json}"]
         return ParsedFile(
             file_path=Path(f"preprocessed_run_{run_id}"),
             file_name=row["run_name"] or f"preprocessed_run_{run_id}",
             metadata_lines=[f"segment: {row['segment_name'] or ''}"] if row['segment_name'] else [],
-            metadata={},
+            metadata=metadata,
             channels=channels,
             raw_row_count=sum(len(ch.time) for ch in channels),
             column_count=len(channels) * 2,
