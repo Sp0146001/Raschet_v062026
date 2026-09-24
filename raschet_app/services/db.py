@@ -429,6 +429,40 @@ class ProjectDatabase:
             self.conn,
         )
 
+    def find_reference_segment_id(self, segment_id: int) -> Optional[int]:
+        """Найти референсный сегмент для указанного сегмента.
+
+        Приоритет:
+        1) другой сегмент из того же исходного файла;
+        2) совпадение температуры;
+        3) совпадение режима света;
+        4) самый новый подходящий референс.
+
+        Если другого референса нет, допускается сам segment_id, если он помечен как референсный.
+        """
+        if not self.is_open():
+            return None
+        assert self.conn is not None
+        row = self.conn.execute(
+            """
+            SELECT rs.id
+            FROM segments ts
+            LEFT JOIN segment_labels tl ON tl.segment_id = ts.id
+            JOIN segment_labels rl ON COALESCE(rl.is_reference, 0) = 1
+            JOIN segments rs ON rs.id = rl.segment_id
+            WHERE ts.id = ?
+            ORDER BY
+                CASE WHEN rs.id <> ts.id THEN 0 ELSE 1 END,
+                CASE WHEN rs.source_file_id = ts.source_file_id THEN 0 ELSE 1 END,
+                CASE WHEN COALESCE(rl.temperature_c, '') = COALESCE(tl.temperature_c, '') THEN 0 ELSE 1 END,
+                CASE WHEN COALESCE(rl.light_mode, '') = COALESCE(tl.light_mode, '') THEN 0 ELSE 1 END,
+                rs.id DESC
+            LIMIT 1
+            """,
+            (segment_id,),
+        ).fetchone()
+        return int(row["id"]) if row is not None else None
+
     def load_segment(self, segment_id: int) -> ParsedFile:
         assert self.conn is not None
         seg = self.conn.execute(

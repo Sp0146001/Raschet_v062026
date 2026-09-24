@@ -45,7 +45,7 @@ from raschet_app.services.exporters import export_dataframe, export_plot
 from raschet_app.services.parser import SmartTxtParser
 from raschet_app.services.features import compute_channel_features
 from raschet_app.services.pca_analysis import SCALE_MODES, run_pca
-from raschet_app.services.preprocess import OPERATIONS, algorithm_to_text, apply_preprocess_pipeline, parse_preprocess_algorithm, profile_to_json
+from raschet_app.services.preprocess import OPERATIONS, REFERENCE_OPERATIONS, algorithm_to_text, apply_preprocess_pipeline, parse_preprocess_algorithm, profile_to_json
 from raschet_app.ui.channel_legend import ChannelLegendWidget
 from raschet_app.ui.graph_style_dialog import GraphStyleDialog
 from raschet_app.ui.plot_widget import FastPlotWidget
@@ -1378,27 +1378,36 @@ class RaschetMainWindow(QMainWindow):
             parsed = self.db.load_segment(segment_id)
             payload = self._build_preprocess_profile_payload()
             operations = payload.get("operations", []) or []
-            if any(op in {"x_div_ref", "ref_div_x"} for op in operations):
-                QMessageBox.information(
-                    self,
-                    "Предобработка",
-                    "Ручной выбор референса убран. Операции x/Xref и Xref/x будут подключены позже через автоматический референсный сегмент.",
-                )
-                return
-            processed_channels = apply_preprocess_pipeline(parsed.channels, payload, reference_channels=None)
+            reference_id = None
+            reference_channels = None
+            if any(op in REFERENCE_OPERATIONS for op in operations):
+                reference_id = self.db.find_reference_segment_id(segment_id)
+                if reference_id is None:
+                    QMessageBox.information(
+                        self,
+                        "Предобработка",
+                        "В алгоритме есть операция Xref, но в проекте нет сегмента с отметкой «Референс: Да».\n\n"
+                        "Откройте детали нужного участка во вкладке «Измерения и расчёт» или создайте новый участок и отметьте его как референсный.",
+                    )
+                    return
+                reference_parsed = self.db.load_segment(reference_id)
+                reference_channels = reference_parsed.channels
+                payload["reference_segment_id"] = reference_id
+            processed_channels = apply_preprocess_pipeline(parsed.channels, payload, reference_channels=reference_channels)
         except Exception as exc:
             QMessageBox.critical(self, "Предобработка", f"Не удалось выполнить предобработку:\n{exc}")
             return
         self.current_preprocessed_run_channels = processed_channels
         self.current_preprocessed_segment_id = segment_id
-        self.current_preprocessed_reference_id = None
+        self.current_preprocessed_reference_id = reference_id
         self.current_preprocessed_profile_payload = payload
         self.current_preprocessed_run_id = -1
         self.preprocess_plot_widget.apply_graph_style(self._current_graph_style_payload())
         self.preprocess_plot_widget.set_log_mode(self.yscale_combo.currentText() == "log")
         self.preprocess_plot_widget.redraw(processed_channels, interval=None)
+        reference_text = f" | Референс ID={reference_id}" if reference_id is not None else ""
         self.preprocess_summary_label.setText(
-            f"Сегмент ID={segment_id} | Алгоритм: {payload.get('algorithm', 'R')}"
+            f"Сегмент ID={segment_id} | Алгоритм: {payload.get('algorithm', 'R')}{reference_text}"
         )
         self._update_ui_state()
 
@@ -1420,10 +1429,9 @@ class RaschetMainWindow(QMainWindow):
                 profile_json=profile_to_json(payload),
                 channels=channels,
                 profile_id=None,
-                reference_segment_id=None,
+                reference_segment_id=getattr(self, 'current_preprocessed_reference_id', None),
             )
             self.current_preprocessed_run_id = run_id
-            self.current_preprocessed_reference_id = None
             self.refresh_preprocessing_views()
             self._set_status(f"Результат предобработки сохранён: ID={run_id}")
         except Exception as exc:
