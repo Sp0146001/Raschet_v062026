@@ -359,6 +359,8 @@ class RaschetMainWindow(QMainWindow):
         self.pca_light_filter_combo.addItems(["Все", "", "OFF", "ON"])
         self.pca_scaling_combo = QComboBox()
         self.pca_scaling_combo.addItems(list(SCALE_MODES.keys()))
+        self.pca_variance_threshold_label = QLabel("95 %")
+        self.pca_variance_threshold_label.setStyleSheet("color:#333; font-weight:600;")
         self.pca_refresh_btn = QPushButton("Обновить выборку")
         self.pca_refresh_btn.clicked.connect(self.refresh_feature_views)
         self.pca_run_btn = QPushButton("Рассчитать PCA")
@@ -373,8 +375,10 @@ class RaschetMainWindow(QMainWindow):
         filter_layout.addWidget(self.pca_light_filter_combo, 1, 3)
         filter_layout.addWidget(QLabel("Масштабирование:"), 2, 0)
         filter_layout.addWidget(self.pca_scaling_combo, 2, 1)
-        filter_layout.addWidget(self.pca_refresh_btn, 2, 2)
-        filter_layout.addWidget(self.pca_run_btn, 2, 3)
+        filter_layout.addWidget(QLabel("Порог дисперсии:"), 2, 2)
+        filter_layout.addWidget(self.pca_variance_threshold_label, 2, 3)
+        filter_layout.addWidget(self.pca_refresh_btn, 3, 2)
+        filter_layout.addWidget(self.pca_run_btn, 3, 3)
         layout.addWidget(filter_box)
 
         self.features_sets_table = QTableWidget()
@@ -413,12 +417,18 @@ class RaschetMainWindow(QMainWindow):
         TableUtils.setup_table(self.pca_eigenvalues_table)
         self.pca_eigenvectors_table = QTableWidget()
         TableUtils.setup_table(self.pca_eigenvectors_table)
+        self.pca_component_selection_table = QTableWidget()
+        TableUtils.setup_table(self.pca_component_selection_table)
+        self.pca_selected_components_table = QTableWidget()
+        TableUtils.setup_table(self.pca_selected_components_table)
 
         for title, table in [
             ("Значения признаков", self.features_values_table),
             ("PCA: ковариация", self.pca_covariance_table),
             ("PCA: собств. значения", self.pca_eigenvalues_table),
             ("PCA: собств. векторы", self.pca_eigenvectors_table),
+            ("PCA: выбор компонент", self.pca_component_selection_table),
+            ("PCA: итог выбора", self.pca_selected_components_table),
             ("PCA: дисперсия", self.pca_variance_table),
             ("PCA: scores", self.pca_scores_table),
             ("PCA: loadings", self.pca_loadings_table),
@@ -1201,6 +1211,10 @@ class RaschetMainWindow(QMainWindow):
                 TableUtils.populate_from_dataframe(self.pca_eigenvalues_table, pd.DataFrame(), index_visible=False)
             if hasattr(self, "pca_eigenvectors_table"):
                 TableUtils.populate_from_dataframe(self.pca_eigenvectors_table, pd.DataFrame(), index_visible=False)
+            if hasattr(self, "pca_component_selection_table"):
+                TableUtils.populate_from_dataframe(self.pca_component_selection_table, pd.DataFrame(), index_visible=False)
+            if hasattr(self, "pca_selected_components_table"):
+                TableUtils.populate_from_dataframe(self.pca_selected_components_table, pd.DataFrame(), index_visible=False)
             self.pca_plot_widget.clear()
             return
         sets_df_raw = self.db.list_feature_sets()
@@ -1344,7 +1358,7 @@ class RaschetMainWindow(QMainWindow):
                 raise ValueError("Не удалось собрать матрицу признаков для PCA.")
             prepared = prepare_pca_input(feature_df)
             scale_mode = SCALE_MODES[self.pca_scaling_combo.currentText()]
-            result = run_pca(prepared.matrix, scale_mode)
+            result = run_pca(prepared.matrix, scale_mode, variance_threshold=0.95)
         except Exception as exc:
             QMessageBox.critical(self, "PCA", f"Не удалось выполнить PCA:\n{exc}")
             return
@@ -1353,6 +1367,8 @@ class RaschetMainWindow(QMainWindow):
         TableUtils.populate_from_dataframe(self.pca_covariance_table, result["covariance"], index_visible=False)
         TableUtils.populate_from_dataframe(self.pca_eigenvalues_table, result["eigenvalues"], index_visible=False)
         TableUtils.populate_from_dataframe(self.pca_eigenvectors_table, result["eigenvectors"], index_visible=False)
+        TableUtils.populate_from_dataframe(self.pca_component_selection_table, result["component_selection"], index_visible=False)
+        TableUtils.populate_from_dataframe(self.pca_selected_components_table, result["selected_components"], index_visible=False)
         TableUtils.populate_from_dataframe(self.pca_variance_table, result["variance"], index_visible=False)
         TableUtils.populate_from_dataframe(self.pca_scores_table, scores_df, index_visible=False)
         TableUtils.populate_from_dataframe(self.pca_loadings_table, result["loadings"], index_visible=False)
