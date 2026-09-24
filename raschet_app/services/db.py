@@ -139,6 +139,7 @@ class ProjectDatabase:
                 sample_group TEXT,
                 class_label TEXT,
                 comment TEXT,
+                is_reference INTEGER DEFAULT 0,
                 FOREIGN KEY (segment_id) REFERENCES segments(id) ON DELETE CASCADE
             );
 
@@ -220,6 +221,14 @@ class ProjectDatabase:
             );
             """
         )
+        self.conn.commit()
+        self._ensure_schema_updates()
+
+    def _ensure_schema_updates(self) -> None:
+        assert self.conn is not None
+        cols = {row[1] for row in self.conn.execute("PRAGMA table_info(segment_labels)").fetchall()}
+        if "is_reference" not in cols:
+            self.conn.execute("ALTER TABLE segment_labels ADD COLUMN is_reference INTEGER DEFAULT 0")
         self.conn.commit()
 
     # --------------------------------------------------------- meta/info
@@ -374,8 +383,8 @@ class ProjectDatabase:
         segment_id = int(cur.lastrowid)
         self.conn.execute(
             """
-            INSERT INTO segment_labels(segment_id, gas_name, concentration_ppm, temperature_c, humidity_pct, light_mode, sample_group, class_label, comment)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO segment_labels(segment_id, gas_name, concentration_ppm, temperature_c, humidity_pct, light_mode, sample_group, class_label, comment, is_reference)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 segment_id,
@@ -387,6 +396,7 @@ class ProjectDatabase:
                 labels.get("sample_group", ""),
                 labels.get("class_label", ""),
                 labels.get("comment", ""),
+                1 if labels.get("is_reference") in {True, "1", "true", "True", "Да", "да", "yes", "YES"} else 0,
             ),
         )
 
@@ -411,7 +421,7 @@ class ProjectDatabase:
         return pd.read_sql_query(
             """
             SELECT s.id, s.segment_name, s.source_file_name, s.t_start, s.t_end, s.points_count, s.created_at,
-                   l.gas_name, l.concentration_ppm, l.temperature_c, l.humidity_pct, l.light_mode, l.sample_group, l.class_label, l.comment
+                   l.gas_name, l.concentration_ppm, l.temperature_c, l.humidity_pct, l.light_mode, l.sample_group, l.class_label, l.comment, l.is_reference
             FROM segments s
             LEFT JOIN segment_labels l ON l.segment_id = s.id
             ORDER BY s.id DESC
@@ -460,6 +470,7 @@ class ProjectDatabase:
             "temperature_c": seg["temperature_c"] or "",
             "light_mode": seg["light_mode"] or "",
             "comment": seg["comment"] or "",
+            "is_reference": "1" if int(seg["is_reference"] or 0) else "0",
         }
         metadata_lines = [
             f"gas: {metadata['gas']}" if metadata.get("gas") else "",
@@ -535,7 +546,7 @@ class ProjectDatabase:
             SELECT s.id AS 'ID сегмента', s.source_file_id AS 'ID файла-источника', s.source_file_name AS 'Источник',
                    s.segment_name AS 'Сегмент', s.t_start AS 'Начало, s', s.t_end AS 'Конец, s', s.points_count AS 'Точек',
                    l.gas_name AS 'Газ', l.concentration_ppm AS 'Концентрация, ppm', l.temperature_c AS 'Температура, °C',
-                   l.light_mode AS 'Свет', l.comment AS 'Комментарий'
+                   l.light_mode AS 'Свет', CASE WHEN COALESCE(l.is_reference, 0)=1 THEN 'Да' ELSE 'Нет' END AS 'Референс', l.comment AS 'Комментарий'
             FROM segments s
             LEFT JOIN segment_labels l ON l.segment_id = s.id
             ORDER BY s.id
@@ -625,6 +636,7 @@ class ProjectDatabase:
                 "Концентрация, ppm": "concentration_ppm",
                 "Температура, °C": "temperature_c",
                 "Свет": "light_mode",
+                "Референс": "is_reference",
                 "Комментарий": "comment",
             },
             "Каналы_сегментов": {
@@ -795,6 +807,7 @@ class ProjectDatabase:
                             "sample_group": "",
                             "class_label": "",
                             "comment": seg_copy.get("comment", ""),
+                            "is_reference": seg_copy.get("is_reference", 0),
                         }
                     )
             for _, row in segment_labels_df.iterrows():
@@ -803,8 +816,8 @@ class ProjectDatabase:
                     continue
                 self.conn.execute(
                     """
-                    INSERT INTO segment_labels(segment_id, gas_name, concentration_ppm, temperature_c, humidity_pct, light_mode, sample_group, class_label, comment)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO segment_labels(segment_id, gas_name, concentration_ppm, temperature_c, humidity_pct, light_mode, sample_group, class_label, comment, is_reference)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         segment_map[old_segment],
@@ -816,6 +829,7 @@ class ProjectDatabase:
                         row.get("sample_group", ""),
                         row.get("class_label", ""),
                         row.get("comment", ""),
+                        1 if row.get("is_reference", 0) in {1, "1", True, "Да", "да", "yes", "YES", "true", "True"} else 0,
                     ),
                 )
 

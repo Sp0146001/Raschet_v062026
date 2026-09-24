@@ -90,6 +90,7 @@ class RaschetMainWindow(QMainWindow):
             "concentration_ppm": "",
             "temperature_c": "",
             "light_mode": "",
+            "is_reference": "0",
             "comment": "",
         }
         self.table_file_labels: List[QLabel] = []
@@ -855,6 +856,8 @@ class RaschetMainWindow(QMainWindow):
                 }
             )[["ID", "Файл", "Источник", "Строк", "Каналов"]]
         if not segments_df.empty:
+            segments_df = segments_df.copy()
+            segments_df["is_reference"] = segments_df["is_reference"].fillna(0).astype(int).map({1: "Да", 0: "Нет"})
             segments_df = segments_df.rename(
                 columns={
                     "id": "ID",
@@ -867,9 +870,10 @@ class RaschetMainWindow(QMainWindow):
                     "concentration_ppm": "Концентрация, ppm",
                     "temperature_c": "Температура, °C",
                     "light_mode": "Свет",
+                    "is_reference": "Референс",
                     "comment": "Комментарий",
                 }
-            )[["ID", "Сегмент", "Источник", "Начало, s", "Конец, s", "Точек", "Газ", "Концентрация, ppm", "Температура, °C", "Свет", "Комментарий"]]
+            )[["ID", "Сегмент", "Источник", "Начало, s", "Конец, s", "Точек", "Газ", "Концентрация, ppm", "Температура, °C", "Свет", "Референс", "Комментарий"]]
         TableUtils.populate_from_dataframe(self.project_files_table, files_df, index_visible=False)
         TableUtils.populate_from_dataframe(self.segments_table, segments_df, index_visible=False)
         self.refresh_preprocessing_views(segments_df)
@@ -926,6 +930,8 @@ class RaschetMainWindow(QMainWindow):
             details.append(f"Температура: {self.segment_form_data['temperature_c']} °C")
         if self.segment_form_data.get("light_mode"):
             details.append(f"Свет: {self.segment_form_data['light_mode']}")
+        if str(self.segment_form_data.get("is_reference", "0")) in {"1", "true", "True", "Да", "да"}:
+            details.append("Референс: Да")
         if self.segment_form_data.get("comment"):
             details.append(f"Комментарий: {self.segment_form_data['comment']}")
         self.segment_summary_label.setText(" | ".join(details) if details else "Детали участка не заполнены.")
@@ -1494,6 +1500,7 @@ class RaschetMainWindow(QMainWindow):
             "concentration_ppm": "",
             "temperature_c": "",
             "light_mode": "",
+            "is_reference": "0",
             "comment": "",
         }
         interval = self._get_interval_values()
@@ -1721,6 +1728,7 @@ class RaschetMainWindow(QMainWindow):
                 "concentration_ppm": parsed.metadata.get("concentration_ppm", ""),
                 "temperature_c": parsed.metadata.get("temperature_c", ""),
                 "light_mode": parsed.metadata.get("light_mode", ""),
+                "is_reference": parsed.metadata.get("is_reference", "0"),
                 "comment": parsed.metadata.get("comment", ""),
             }
         )
@@ -1772,6 +1780,7 @@ class RaschetMainWindow(QMainWindow):
             "sample_group": "",
             "class_label": "",
             "comment": self.segment_form_data.get("comment", ""),
+            "is_reference": self.segment_form_data.get("is_reference", "0"),
         }
         try:
             segment_id = self.db.save_segment(

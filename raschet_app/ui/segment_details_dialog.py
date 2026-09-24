@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Dict
 
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -18,7 +19,7 @@ class SegmentDetailsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Детали участка")
         self.setModal(True)
-        self.resize(520, 260)
+        self.resize(520, 280)
 
         root = QVBoxLayout(self)
         form = QFormLayout()
@@ -30,6 +31,8 @@ class SegmentDetailsDialog(QDialog):
         self.light_combo = QComboBox()
         self.light_combo.addItems(["", "OFF", "ON"])
         self.light_combo.setCurrentText(current_data.get("light_mode", ""))
+        self.reference_check = QCheckBox("Использовать как референсный участок")
+        self.reference_check.setChecked(str(current_data.get("is_reference", "0")) in {"1", "true", "True", "Да", "да", "yes", "YES"})
         self.comment_edit = QLineEdit(current_data.get("comment", ""))
 
         form.addRow("Название сегмента:", self.segment_name_edit)
@@ -37,6 +40,7 @@ class SegmentDetailsDialog(QDialog):
         form.addRow("Концентрация, ppm:", self.concentration_edit)
         form.addRow("Температура, °C:", self.temperature_edit)
         form.addRow("Свет:", self.light_combo)
+        form.addRow("Референс:", self.reference_check)
         form.addRow("Комментарий:", self.comment_edit)
         root.addLayout(form)
 
@@ -52,5 +56,6 @@ class SegmentDetailsDialog(QDialog):
             "concentration_ppm": self.concentration_edit.text().strip(),
             "temperature_c": self.temperature_edit.text().strip(),
             "light_mode": self.light_combo.currentText().strip(),
+            "is_reference": "1" if self.reference_check.isChecked() else "0",
             "comment": self.comment_edit.text().strip(),
         }
