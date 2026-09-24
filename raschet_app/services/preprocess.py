@@ -170,7 +170,9 @@ def apply_preprocess_pipeline(
         elif op == "ref_div_x":
             matrix = ref_vector[np.newaxis, :] / (matrix + eps)
         elif op == "x_div_median":
-            med = np.median(matrix, axis=1, keepdims=True)
+            # Нормируем каждый канал на его собственную медиану по времени.
+            # matrix имеет форму: строки = время, столбцы = каналы.
+            med = np.median(matrix, axis=0, keepdims=True)
             matrix = matrix / (med + eps)
         elif op == "zscore":
             mean = np.mean(matrix, axis=0, keepdims=True)

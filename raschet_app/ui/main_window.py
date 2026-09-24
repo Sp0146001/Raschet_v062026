@@ -1398,7 +1398,7 @@ class RaschetMainWindow(QMainWindow):
         self.preprocess_plot_widget.set_log_mode(self.yscale_combo.currentText() == "log")
         self.preprocess_plot_widget.redraw(processed_channels, interval=None)
         self.preprocess_summary_label.setText(
-            f"Сегмент ID={segment_id} | Операции: {', '.join(payload.get('operations', [])) or 'без предобработки'}"
+            f"Сегмент ID={segment_id} | Алгоритм: {payload.get('algorithm', 'R')}"
         )
         self._update_ui_state()
 
