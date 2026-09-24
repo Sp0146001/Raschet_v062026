@@ -45,6 +45,7 @@ from raschet_app.services.exporters import export_dataframe, export_plot
 from raschet_app.services.parser import SmartTxtParser
 from raschet_app.services.features import compute_channel_features
 from raschet_app.services.pca_analysis import SCALE_MODES, run_pca
+from raschet_app.services.pca_preprocessing import prepare_pca_input
 from raschet_app.services.preprocess import OPERATIONS, REFERENCE_OPERATIONS, algorithm_to_text, apply_preprocess_pipeline, parse_preprocess_algorithm, profile_from_json, profile_to_json
 from raschet_app.ui.channel_legend import ChannelLegendWidget
 from raschet_app.ui.graph_style_dialog import GraphStyleDialog
@@ -1270,6 +1271,9 @@ class RaschetMainWindow(QMainWindow):
             else:
                 algorithm = "R"
             feature_set_name = algorithm
+            source_comment = ""
+            if isinstance(self.current_feature_segment_id, int):
+                source_comment = self.db.get_segment_comment(self.current_feature_segment_id)
             feature_set_id = self.db.save_feature_set(
                 feature_set_name=feature_set_name,
                 features_long=self.current_features_long_df,
@@ -1277,7 +1281,7 @@ class RaschetMainWindow(QMainWindow):
                 run_id=self.current_feature_run_id,
                 profile_id=None,
                 source_kind=self.current_feature_source_kind,
-                note="Рассчитано в Raschet",
+                note=source_comment,
             )
             self.refresh_feature_views()
             self._set_status(f"Набор признаков сохранён: ID={feature_set_id}")
@@ -1323,9 +1327,9 @@ class RaschetMainWindow(QMainWindow):
             meta_df, feature_df = self.db.load_feature_matrix(feature_set_ids)
             if feature_df.empty:
                 raise ValueError("Не удалось собрать матрицу признаков для PCA.")
-            matrix = feature_df.drop(columns=["id"])
+            prepared = prepare_pca_input(feature_df)
             scale_mode = SCALE_MODES[self.pca_scaling_combo.currentText()]
-            result = run_pca(matrix, scale_mode)
+            result = run_pca(prepared.matrix, scale_mode)
         except Exception as exc:
             QMessageBox.critical(self, "PCA", f"Не удалось выполнить PCA:\n{exc}")
             return
@@ -1337,7 +1341,7 @@ class RaschetMainWindow(QMainWindow):
         self._plot_pca_scores(scores_df)
         self.analytics_tabs.setCurrentIndex(1)
         self.main_sections.setCurrentWidget(self.analytics_page)
-        self._set_status("PCA рассчитан по текущей выборке наборов признаков.")
+        self._set_status(f"PCA рассчитан. Подготовлено признаков: {prepared.matrix.shape[1]}.")
 
     def _plot_pca_scores(self, scores_df: pd.DataFrame) -> None:
         self.pca_plot_widget.clear()
