@@ -229,7 +229,30 @@ class ProjectDatabase:
         cols = {row[1] for row in self.conn.execute("PRAGMA table_info(segment_labels)").fetchall()}
         if "is_reference" not in cols:
             self.conn.execute("ALTER TABLE segment_labels ADD COLUMN is_reference INTEGER DEFAULT 0")
+        self._cleanup_legacy_feature_notes()
         self.conn.commit()
+
+    def _cleanup_legacy_feature_notes(self) -> None:
+        """Заменить старый служебный комментарий наборов признаков на комментарий исходного сегмента."""
+        assert self.conn is not None
+        self.conn.execute(
+            """
+            UPDATE feature_sets
+            SET note = COALESCE(
+                (
+                    SELECT COALESCE(l.comment, s.comment, '')
+                    FROM segments s
+                    LEFT JOIN segment_labels l ON l.segment_id = s.id
+                    WHERE s.id = COALESCE(
+                        feature_sets.segment_id,
+                        (SELECT r.segment_id FROM preprocessed_runs r WHERE r.id = feature_sets.run_id)
+                    )
+                ),
+                ''
+            )
+            WHERE TRIM(COALESCE(note, '')) IN ('Рассчитано в Raschet', 'Рассчитано в Raschet.')
+            """
+        )
 
     # --------------------------------------------------------- meta/info
     def set_meta(self, key: str, value: str) -> None:
@@ -428,6 +451,21 @@ class ProjectDatabase:
             """,
             self.conn,
         )
+
+    def get_segment_comment(self, segment_id: int) -> str:
+        if not self.is_open():
+            return ""
+        assert self.conn is not None
+        row = self.conn.execute(
+            """
+            SELECT COALESCE(l.comment, s.comment, '') AS comment
+            FROM segments s
+            LEFT JOIN segment_labels l ON l.segment_id = s.id
+            WHERE s.id = ?
+            """,
+            (segment_id,),
+        ).fetchone()
+        return str(row["comment"] or "") if row is not None else ""
 
     def find_reference_segment_id(self, segment_id: int) -> Optional[int]:
         """Найти референсный сегмент для указанного сегмента.
