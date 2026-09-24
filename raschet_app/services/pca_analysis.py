@@ -9,6 +9,7 @@ from raschet_app.services.pca_component_selection import select_components
 from raschet_app.services.pca_covariance import compute_covariance_matrix, covariance_matrix_to_table
 from raschet_app.services.pca_eigendecomposition import compute_eigendecomposition, eigenvalues_to_table, eigenvectors_to_table
 from raschet_app.services.pca_new_coordinates import build_new_coordinate_system, new_coordinate_system_to_table
+from raschet_app.services.pca_projection import project_to_new_coordinates, projection_to_table
 from raschet_app.services.pca_sorting import sort_eigen_components_desc
 
 
@@ -50,30 +51,11 @@ def run_pca(
     sorted_components = sort_eigen_components_desc(eigendecomposition)
     selection = select_components(sorted_components.eigenvalues, variance_threshold)
     new_coordinates = build_new_coordinate_system(sorted_components.eigenvectors, selection.n_components)
-    U, S, VT = np.linalg.svd(X, full_matrices=False)
+    projection = project_to_new_coordinates(covariance.centered_values, feature_df.index, new_coordinates.basis)
 
-    n_samples = X.shape[0]
-    eigenvalues = (S ** 2) / max(n_samples - 1, 1)
-    total_variance = float(np.sum(eigenvalues)) if np.sum(eigenvalues) else 1.0
-    explained_ratio = eigenvalues / total_variance
-    cum_ratio = np.cumsum(explained_ratio)
-
-    pc_names = [f"PC{i+1}" for i in range(len(eigenvalues))]
-    variance_df = pd.DataFrame(
-        {
-            "Компонента": pc_names,
-            "Собственное значение": eigenvalues,
-            "Доля дисперсии, %": explained_ratio * 100.0,
-            "Накопленная доля, %": cum_ratio * 100.0,
-        }
-    )
-
-    scores = U * S
-    scores_df = pd.DataFrame(scores, columns=pc_names)
-
-    loadings = VT.T
-    loadings_df = pd.DataFrame(loadings, index=feature_df.columns, columns=pc_names).reset_index().rename(columns={"index": "Признак"})
-
+    variance_df = selection.table[["Компонента", "Собственное значение", "Доля дисперсии, %", "Накопленная доля, %"]].copy()
+    scores_df = projection_to_table(projection)
+    loadings_df = new_coordinate_system_to_table(new_coordinates)
     means_df = pd.DataFrame({"Признак": feature_df.columns, "Среднее": mean.values, "Std": std.values})
 
     return {

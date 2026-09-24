@@ -433,7 +433,7 @@ class RaschetMainWindow(QMainWindow):
             ("PCA: итог выбора", self.pca_selected_components_table),
             ("PCA: новая база", self.pca_new_coordinates_table),
             ("PCA: дисперсия", self.pca_variance_table),
-            ("PCA: scores", self.pca_scores_table),
+            ("PCA: проекция", self.pca_scores_table),
             ("PCA: loadings", self.pca_loadings_table),
         ]:
             tab = QWidget()
@@ -1381,7 +1381,7 @@ class RaschetMainWindow(QMainWindow):
         self._plot_pca_scores(scores_df)
         self.analytics_tabs.setCurrentIndex(1)
         self.main_sections.setCurrentWidget(self.analytics_page)
-        self._set_status(f"PCA рассчитан. Подготовлено признаков: {prepared.matrix.shape[1]}.")
+        self._set_status(f"PCA рассчитан. Подготовлено признаков: {prepared.matrix.shape[1]}, объектов: {len(scores_df)}.")
 
     def _plot_pca_scores(self, scores_df: pd.DataFrame) -> None:
         self.pca_plot_widget.clear()
