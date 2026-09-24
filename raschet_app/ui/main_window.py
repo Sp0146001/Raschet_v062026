@@ -3,8 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+import numpy as np
 import pandas as pd
 import pyqtgraph as pg
+try:
+    import pyqtgraph.opengl as gl
+except Exception:
+    gl = None
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QCloseEvent, QColor, QDoubleValidator, QIcon
 from PySide6.QtWidgets import (
@@ -21,6 +26,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSpinBox,
     QSplitter,
+    QStackedWidget,
     QStatusBar,
     QTabWidget,
     QTableWidget,
@@ -391,12 +397,29 @@ class RaschetMainWindow(QMainWindow):
         layout.addLayout(actions)
 
         pca_graph_layout = QHBoxLayout()
+        self.pca_plot_stack = QStackedWidget()
         self.pca_plot_widget = pg.PlotWidget()
         self.pca_plot_widget.setBackground("w")
         self.pca_plot_widget.showGrid(x=True, y=True, alpha=0.25)
         self.pca_plot_widget.getPlotItem().setLabel("bottom", "PC1")
         self.pca_plot_widget.getPlotItem().setLabel("left", "PC2")
-        pca_graph_layout.addWidget(self.pca_plot_widget, stretch=1)
+        self.pca_plot_stack.addWidget(self.pca_plot_widget)
+
+        self.pca_plot_3d_available = gl is not None
+        if self.pca_plot_3d_available:
+            self.pca_plot_3d_widget = gl.GLViewWidget()
+            self.pca_plot_3d_widget.setBackgroundColor("w")
+            self.pca_plot_3d_widget.setCameraPosition(distance=40, elevation=22, azimuth=35)
+            self.pca_plot_stack.addWidget(self.pca_plot_3d_widget)
+        else:
+            self.pca_plot_3d_widget = None
+            self.pca_plot_3d_placeholder = QLabel(
+                "Полноценный 3D-график недоступен: не загружен модуль pyqtgraph.opengl / PyOpenGL."
+            )
+            self.pca_plot_3d_placeholder.setWordWrap(True)
+            self.pca_plot_3d_placeholder.setStyleSheet("color:#a33; padding:16px;")
+            self.pca_plot_stack.addWidget(self.pca_plot_3d_placeholder)
+        pca_graph_layout.addWidget(self.pca_plot_stack, stretch=1)
 
         pca_legend_box = QGroupBox("Легенда PCA по газу")
         pca_legend_layout = QVBoxLayout(pca_legend_box)
@@ -1229,7 +1252,7 @@ class RaschetMainWindow(QMainWindow):
                 TableUtils.populate_from_dataframe(self.pca_selected_components_table, pd.DataFrame(), index_visible=False)
             if hasattr(self, "pca_new_coordinates_table"):
                 TableUtils.populate_from_dataframe(self.pca_new_coordinates_table, pd.DataFrame(), index_visible=False)
-            self.pca_plot_widget.clear()
+            self._clear_pca_plots()
             if hasattr(self, "pca_gas_legend_table"):
                 self._populate_pca_gas_legend([])
             return
@@ -1406,6 +1429,77 @@ class RaschetMainWindow(QMainWindow):
             self.pca_gas_legend_table.setItem(row_idx, 2, count_item)
         self.pca_gas_legend_table.resizeColumnsToContents()
 
+    def _clear_pca_plots(self) -> None:
+        self.pca_plot_widget.clear()
+        if getattr(self, "pca_plot_3d_available", False) and self.pca_plot_3d_widget is not None:
+            for item in list(self.pca_plot_3d_widget.items):
+                self.pca_plot_3d_widget.removeItem(item)
+
+    def _setup_pca_3d_scene(self) -> None:
+        if not getattr(self, "pca_plot_3d_available", False) or self.pca_plot_3d_widget is None:
+            return
+        grid_size = 24.0
+        grid_spacing = 4.0
+
+        grid_xy = gl.GLGridItem()
+        grid_xy.setSize(x=grid_size, y=grid_size, z=0)
+        grid_xy.setSpacing(x=grid_spacing, y=grid_spacing, z=1)
+        self.pca_plot_3d_widget.addItem(grid_xy)
+
+        grid_xz = gl.GLGridItem()
+        grid_xz.rotate(90, 1, 0, 0)
+        grid_xz.setSize(x=grid_size, y=grid_size, z=0)
+        grid_xz.setSpacing(x=grid_spacing, y=grid_spacing, z=1)
+        self.pca_plot_3d_widget.addItem(grid_xz)
+
+        grid_yz = gl.GLGridItem()
+        grid_yz.rotate(90, 0, 1, 0)
+        grid_yz.setSize(x=grid_size, y=grid_size, z=0)
+        grid_yz.setSpacing(x=grid_spacing, y=grid_spacing, z=1)
+        self.pca_plot_3d_widget.addItem(grid_yz)
+
+        axis_len = 12.0
+        axes = [
+            (np.array([[-axis_len, 0, 0], [axis_len, 0, 0]], dtype=np.float32), (0.85, 0.15, 0.15, 1.0)),
+            (np.array([[0, -axis_len, 0], [0, axis_len, 0]], dtype=np.float32), (0.15, 0.65, 0.15, 1.0)),
+            (np.array([[0, 0, -axis_len], [0, 0, axis_len]], dtype=np.float32), (0.15, 0.25, 0.9, 1.0)),
+        ]
+        for pos, color in axes:
+            self.pca_plot_3d_widget.addItem(gl.GLLinePlotItem(pos=pos, color=color, width=2.5, antialias=True))
+
+        if hasattr(gl, "GLTextItem"):
+            for text, pos, color in [
+                ("PC1", (axis_len + 0.8, 0, 0), (0.85, 0.15, 0.15, 1.0)),
+                ("PC2", (0, axis_len + 0.8, 0), (0.15, 0.65, 0.15, 1.0)),
+                ("PC3", (0, 0, axis_len + 0.8), (0.15, 0.25, 0.9, 1.0)),
+            ]:
+                item = gl.GLTextItem(pos=pos, text=text, color=color)
+                self.pca_plot_3d_widget.addItem(item)
+
+        self.pca_plot_3d_widget.setCameraPosition(distance=36.0, elevation=22, azimuth=35)
+
+    def _prepare_pca_3d_positions(self, scores_df: pd.DataFrame) -> np.ndarray:
+        raw = scores_df[["PC1", "PC2", "PC3"]].to_numpy(dtype=float)
+        raw = np.nan_to_num(raw, nan=0.0, posinf=0.0, neginf=0.0)
+        center = np.mean(raw, axis=0, keepdims=True)
+        centered = raw - center
+        max_span = float(np.nanmax(np.ptp(centered, axis=0))) if centered.size else 1.0
+        if not np.isfinite(max_span) or max_span <= 1e-12:
+            max_span = 1.0
+        positions = centered / max_span * 18.0
+
+        # Если точки совпадают или почти совпадают, они прячутся в центре осей.
+        # Добавляем небольшой визуальный разнос только для отображения 3D-графика;
+        # численные координаты в таблицах PCA не меняются.
+        if len(positions) > 1:
+            spread = float(np.nanmax(np.ptp(positions, axis=0)))
+            if spread < 0.5:
+                angles = np.linspace(0.0, 2.0 * np.pi, len(positions), endpoint=False)
+                positions[:, 0] += 1.2 * np.cos(angles)
+                positions[:, 1] += 1.2 * np.sin(angles)
+                positions[:, 2] += np.linspace(-0.8, 0.8, len(positions))
+        return positions.astype(np.float32)
+
     def _plot_pca_scores(self, scores_df: pd.DataFrame) -> None:
         mode = self.pca_view_mode_combo.currentText() if hasattr(self, "pca_view_mode_combo") else "2D: PC1/PC2"
         if mode.startswith("3D"):
@@ -1414,7 +1508,8 @@ class RaschetMainWindow(QMainWindow):
             self._plot_pca_scores_2d(scores_df)
 
     def _plot_pca_scores_2d(self, scores_df: pd.DataFrame) -> None:
-        self.pca_plot_widget.clear()
+        self._clear_pca_plots()
+        self.pca_plot_stack.setCurrentIndex(0)
         plot_item = self.pca_plot_widget.getPlotItem()
         plot_item.setTitle("PCA: 2D-проекция PC1 / PC2")
         plot_item.setLabel("bottom", "PC1")
@@ -1438,35 +1533,64 @@ class RaschetMainWindow(QMainWindow):
         self._populate_pca_gas_legend(legend_rows)
 
     def _plot_pca_scores_3d(self, scores_df: pd.DataFrame) -> None:
-        self.pca_plot_widget.clear()
-        plot_item = self.pca_plot_widget.getPlotItem()
-        plot_item.setTitle("PCA: 3D-представление PC1 / PC2 / PC3 (изометрическая проекция)")
-        plot_item.setLabel("bottom", "PC1 + проекция PC3")
-        plot_item.setLabel("left", "PC2 + проекция PC3")
-        plot_item.showGrid(x=True, y=True, alpha=0.25)
-        if scores_df.empty or "PC1" not in scores_df.columns:
+        self._clear_pca_plots()
+        self.pca_plot_stack.setCurrentIndex(1)
+        if not getattr(self, "pca_plot_3d_available", False) or self.pca_plot_3d_widget is None:
+            self._populate_pca_gas_legend([])
+            QMessageBox.information(
+                self,
+                "PCA 3D",
+                "Полноценный 3D-график недоступен. Установите зависимости PyOpenGL и перезапустите приложение.",
+            )
+            return
+        if scores_df.empty or not all(col in scores_df.columns for col in ["PC1", "PC2", "PC3"]):
             self._populate_pca_gas_legend([])
             return
 
-        pc2 = scores_df["PC2"].to_numpy(dtype=float) if "PC2" in scores_df.columns else [0.0] * len(scores_df)
-        pc3 = scores_df["PC3"].to_numpy(dtype=float) if "PC3" in scores_df.columns else [0.0] * len(scores_df)
-        z_min = float(min(pc3)) if len(pc3) else 0.0
-        z_max = float(max(pc3)) if len(pc3) else 0.0
-        z_span = z_max - z_min if z_max != z_min else 1.0
+        self._setup_pca_3d_scene()
+        display_positions = self._prepare_pca_3d_positions(scores_df)
+        plot_df = scores_df.copy().reset_index(drop=True)
+        plot_df["_x3d"] = display_positions[:, 0]
+        plot_df["_y3d"] = display_positions[:, 1]
+        plot_df["_z3d"] = display_positions[:, 2]
 
         color_cycle = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"]
-        labels = scores_df["gas_name"].fillna("Без метки").replace("", "Без метки")
+        labels = plot_df["gas_name"].fillna("Без метки").replace("", "Без метки")
         legend_rows: List[Dict[str, object]] = []
         for idx, label in enumerate(sorted(labels.unique())):
-            sub = scores_df[labels == label].copy()
-            z = sub["PC3"].to_numpy(dtype=float) if "PC3" in sub.columns else [0.0] * len(sub)
-            x = sub["PC1"].to_numpy(dtype=float) + 0.55 * z
-            y_base = sub["PC2"].to_numpy(dtype=float) if "PC2" in sub.columns else [0.0] * len(sub)
-            y = y_base + 0.32 * z
-            sizes = [7.0 + 5.0 * ((float(value) - z_min) / z_span) for value in z]
+            sub = plot_df[labels == label].copy()
+            positions = sub[["_x3d", "_y3d", "_z3d"]].to_numpy(dtype=np.float32)
             color = color_cycle[idx % len(color_cycle)]
-            scatter = pg.ScatterPlotItem(x=x, y=y, pen=pg.mkPen(color, width=1.2), brush=pg.mkBrush(color), size=sizes)
-            plot_item.addItem(scatter)
+            rgba = QColor(color)
+            gl_color = np.tile(
+                np.array([rgba.redF(), rgba.greenF(), rgba.blueF(), 0.95], dtype=np.float32),
+                (len(positions), 1),
+            )
+            scatter = gl.GLScatterPlotItem(pos=positions, color=gl_color, size=14.0, pxMode=True)
+            self.pca_plot_3d_widget.addItem(scatter)
+
+            # Дублируем точки маленькими 3D-крестами: они лучше видны при совпадении
+            # координат и на разных драйверах OpenGL.
+            cross_segments = []
+            arm = 0.35
+            for point in positions:
+                x, y, z = point
+                cross_segments.extend(
+                    [
+                        [x - arm, y, z], [x + arm, y, z],
+                        [x, y - arm, z], [x, y + arm, z],
+                        [x, y, z - arm], [x, y, z + arm],
+                    ]
+                )
+            if cross_segments:
+                cross_item = gl.GLLinePlotItem(
+                    pos=np.asarray(cross_segments, dtype=np.float32),
+                    color=(rgba.redF(), rgba.greenF(), rgba.blueF(), 1.0),
+                    width=2.0,
+                    mode="lines",
+                    antialias=True,
+                )
+                self.pca_plot_3d_widget.addItem(cross_item)
             legend_rows.append({"color": color, "gas": str(label), "count": len(sub)})
         self._populate_pca_gas_legend(legend_rows)
 
