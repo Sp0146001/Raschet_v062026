@@ -237,13 +237,47 @@ class RaschetMainWindow(QMainWindow):
         preprocess_hint.setStyleSheet("color:#555;")
         left_layout.addWidget(preprocess_hint)
 
-        ops_box = QGroupBox("Операции предобработки (временно выполняются сверху вниз)")
+        ops_box = QGroupBox("Конструктор алгоритма предобработки")
         ops_layout = QVBoxLayout(ops_box)
-        self.pre_op_checks: Dict[str, QCheckBox] = {}
+
+        constructor_layout = QHBoxLayout()
+        operation_buttons_box = QGroupBox("Операции")
+        operation_buttons_layout = QVBoxLayout(operation_buttons_box)
+        self.pre_algorithm_ops: List[str] = []
+        self.pre_operation_buttons: Dict[str, QPushButton] = {}
         for op_key, op_label in OPERATIONS:
-            cb = QCheckBox(op_label)
-            self.pre_op_checks[op_key] = cb
-            ops_layout.addWidget(cb)
+            btn = QPushButton(op_label)
+            btn.clicked.connect(lambda _checked=False, key=op_key: self._add_preprocess_operation(key))
+            self.pre_operation_buttons[op_key] = btn
+            operation_buttons_layout.addWidget(btn)
+        operation_buttons_layout.addStretch(1)
+        constructor_layout.addWidget(operation_buttons_box, 1)
+
+        algorithm_order_box = QGroupBox("Порядок обработки")
+        algorithm_order_layout = QVBoxLayout(algorithm_order_box)
+        self.pre_algorithm_chain_label = QLabel("R")
+        self.pre_algorithm_chain_label.setWordWrap(True)
+        self.pre_algorithm_chain_label.setStyleSheet("font-weight:600; color:#333;")
+        algorithm_order_layout.addWidget(self.pre_algorithm_chain_label)
+
+        order_actions = QHBoxLayout()
+        self.pre_remove_last_op_btn = QPushButton("Убрать последнюю")
+        self.pre_remove_last_op_btn.clicked.connect(self._remove_last_preprocess_operation)
+        self.pre_clear_algorithm_btn = QPushButton("Очистить")
+        self.pre_clear_algorithm_btn.clicked.connect(self._clear_preprocess_algorithm)
+        order_actions.addWidget(self.pre_remove_last_op_btn)
+        order_actions.addWidget(self.pre_clear_algorithm_btn)
+        algorithm_order_layout.addLayout(order_actions)
+        algorithm_order_layout.addStretch(1)
+        constructor_layout.addWidget(algorithm_order_box, 1)
+
+        ops_layout.addLayout(constructor_layout)
+        ops_layout.addWidget(QLabel("Алгоритм:"))
+        self.pre_algorithm_edit = QLineEdit("R")
+        self.pre_algorithm_edit.setReadOnly(True)
+        self.pre_algorithm_edit.setToolTip("Пока поле заполняется автоматически. Ручной ввод будет подключён на этапе парсера алгоритма.")
+        ops_layout.addWidget(self.pre_algorithm_edit)
+        self._refresh_preprocess_algorithm_display()
         left_layout.addWidget(ops_box)
 
         run_btns = QHBoxLayout()
@@ -1030,10 +1064,37 @@ class RaschetMainWindow(QMainWindow):
         self.current_xline_label.setText(f"Rᵢ @ t={x_value:.4f} s")
         self._update_ui_state()
 
+    def _operation_label(self, op_key: str) -> str:
+        return dict(OPERATIONS).get(op_key, op_key)
+
+    def _preprocess_algorithm_text(self) -> str:
+        if not self.pre_algorithm_ops:
+            return "R"
+        return " -> ".join(self._operation_label(op) for op in self.pre_algorithm_ops)
+
+    def _refresh_preprocess_algorithm_display(self) -> None:
+        algorithm = self._preprocess_algorithm_text()
+        self.pre_algorithm_chain_label.setText(algorithm)
+        self.pre_algorithm_edit.setText(algorithm)
+        self.pre_remove_last_op_btn.setEnabled(bool(self.pre_algorithm_ops))
+        self.pre_clear_algorithm_btn.setEnabled(bool(self.pre_algorithm_ops))
+
+    def _add_preprocess_operation(self, op_key: str) -> None:
+        self.pre_algorithm_ops.append(op_key)
+        self._refresh_preprocess_algorithm_display()
+
+    def _remove_last_preprocess_operation(self) -> None:
+        if self.pre_algorithm_ops:
+            self.pre_algorithm_ops.pop()
+        self._refresh_preprocess_algorithm_display()
+
+    def _clear_preprocess_algorithm(self) -> None:
+        self.pre_algorithm_ops.clear()
+        self._refresh_preprocess_algorithm_display()
+
     def _build_preprocess_profile_payload(self) -> Dict[str, object]:
-        operations = [key for key, _label in OPERATIONS if self.pre_op_checks[key].isChecked()]
-        op_labels = dict(OPERATIONS)
-        algorithm = " -> ".join(op_labels.get(op, op) for op in operations) or "R"
+        operations = list(self.pre_algorithm_ops)
+        algorithm = self._preprocess_algorithm_text()
         return {
             "profile_name": algorithm,
             "algorithm": algorithm,
