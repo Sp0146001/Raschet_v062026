@@ -421,6 +421,8 @@ class RaschetMainWindow(QMainWindow):
         TableUtils.setup_table(self.pca_component_selection_table)
         self.pca_selected_components_table = QTableWidget()
         TableUtils.setup_table(self.pca_selected_components_table)
+        self.pca_new_coordinates_table = QTableWidget()
+        TableUtils.setup_table(self.pca_new_coordinates_table)
 
         for title, table in [
             ("Значения признаков", self.features_values_table),
@@ -429,6 +431,7 @@ class RaschetMainWindow(QMainWindow):
             ("PCA: собств. векторы", self.pca_eigenvectors_table),
             ("PCA: выбор компонент", self.pca_component_selection_table),
             ("PCA: итог выбора", self.pca_selected_components_table),
+            ("PCA: новая база", self.pca_new_coordinates_table),
             ("PCA: дисперсия", self.pca_variance_table),
             ("PCA: scores", self.pca_scores_table),
             ("PCA: loadings", self.pca_loadings_table),
@@ -1215,6 +1218,8 @@ class RaschetMainWindow(QMainWindow):
                 TableUtils.populate_from_dataframe(self.pca_component_selection_table, pd.DataFrame(), index_visible=False)
             if hasattr(self, "pca_selected_components_table"):
                 TableUtils.populate_from_dataframe(self.pca_selected_components_table, pd.DataFrame(), index_visible=False)
+            if hasattr(self, "pca_new_coordinates_table"):
+                TableUtils.populate_from_dataframe(self.pca_new_coordinates_table, pd.DataFrame(), index_visible=False)
             self.pca_plot_widget.clear()
             return
         sets_df_raw = self.db.list_feature_sets()
@@ -1369,6 +1374,7 @@ class RaschetMainWindow(QMainWindow):
         TableUtils.populate_from_dataframe(self.pca_eigenvectors_table, result["eigenvectors"], index_visible=False)
         TableUtils.populate_from_dataframe(self.pca_component_selection_table, result["component_selection"], index_visible=False)
         TableUtils.populate_from_dataframe(self.pca_selected_components_table, result["selected_components"], index_visible=False)
+        TableUtils.populate_from_dataframe(self.pca_new_coordinates_table, result["new_coordinates"], index_visible=False)
         TableUtils.populate_from_dataframe(self.pca_variance_table, result["variance"], index_visible=False)
         TableUtils.populate_from_dataframe(self.pca_scores_table, scores_df, index_visible=False)
         TableUtils.populate_from_dataframe(self.pca_loadings_table, result["loadings"], index_visible=False)

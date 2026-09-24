@@ -8,6 +8,7 @@ import pandas as pd
 from raschet_app.services.pca_component_selection import select_components
 from raschet_app.services.pca_covariance import compute_covariance_matrix, covariance_matrix_to_table
 from raschet_app.services.pca_eigendecomposition import compute_eigendecomposition, eigenvalues_to_table, eigenvectors_to_table
+from raschet_app.services.pca_new_coordinates import build_new_coordinate_system, new_coordinate_system_to_table
 from raschet_app.services.pca_sorting import sort_eigen_components_desc
 
 
@@ -48,6 +49,7 @@ def run_pca(
     eigendecomposition = compute_eigendecomposition(covariance.matrix)
     sorted_components = sort_eigen_components_desc(eigendecomposition)
     selection = select_components(sorted_components.eigenvalues, variance_threshold)
+    new_coordinates = build_new_coordinate_system(sorted_components.eigenvectors, selection.n_components)
     U, S, VT = np.linalg.svd(X, full_matrices=False)
 
     n_samples = X.shape[0]
@@ -85,8 +87,14 @@ def run_pca(
         "component_selection": selection.table,
         "selected_components": pd.DataFrame(
             {
-                "Параметр": ["Режим", "Порог, %", "Выбрано компонент"],
-                "Значение": [selection.mode, selection.threshold * 100.0, selection.n_components],
+                "Параметр": ["Режим", "Порог, %", "Выбрано компонент", "Компоненты новой базы"],
+                "Значение": [
+                    selection.mode,
+                    selection.threshold * 100.0,
+                    selection.n_components,
+                    ", ".join(new_coordinates.selected_components),
+                ],
             }
         ),
+        "new_coordinates": new_coordinate_system_to_table(new_coordinates),
     }
