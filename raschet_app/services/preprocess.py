@@ -17,6 +17,8 @@ OPERATIONS = [
     ("zscore", "(x-mean(x))/std(x)"),
 ]
 
+REFERENCE_OPERATIONS = {"x_div_ref", "ref_div_x"}
+
 
 def operations_map() -> Dict[str, str]:
     return dict(OPERATIONS)
@@ -116,6 +118,34 @@ def profile_from_json(text: str) -> Dict[str, object]:
     return json.loads(text)
 
 
+def normalize_operations_sequence(operations: object) -> List[str]:
+    if isinstance(operations, str):
+        return parse_preprocess_algorithm(operations)
+    if operations is None:
+        return []
+
+    known_keys = {key for key, _label in OPERATIONS}
+    normalized: List[str] = []
+    unknown: List[str] = []
+    for op in operations:
+        op_key = str(op).strip()
+        if not op_key:
+            continue
+        if op_key in known_keys:
+            normalized.append(op_key)
+        else:
+            unknown.append(op_key)
+
+    if unknown:
+        supported = ", ".join(["R"] + [label for _, label in OPERATIONS])
+        raise ValueError(
+            "Не удалось выполнить алгоритм: неизвестная операция(и): "
+            + "; ".join(unknown)
+            + f". Поддерживаются: {supported}."
+        )
+    return normalized
+
+
 def build_common_time_matrix(channels: Iterable[ChannelData]) -> Tuple[np.ndarray, np.ndarray, List[ChannelData]]:
     channels = list(channels)
     if not channels:
@@ -144,6 +174,35 @@ def _reference_vector(ref_channels: Iterable[ChannelData], ordered_channels: Lis
     return np.array(values, dtype=float)
 
 
+def _apply_preprocess_operation(
+    matrix: np.ndarray,
+    operation: str,
+    ref_vector: Optional[np.ndarray],
+    eps: float,
+) -> np.ndarray:
+    # matrix имеет форму: строки = время, столбцы = каналы.
+    # Все операции выполняются поканально и строго в порядке алгоритма пользователя.
+    if operation == "log":
+        return np.log(np.where(matrix <= 0, 1.0, matrix))
+    if operation == "x_div_ref":
+        if ref_vector is None:
+            raise ValueError("Для операции x/Xref требуется референсный сегмент.")
+        return matrix / (ref_vector[np.newaxis, :] + eps)
+    if operation == "ref_div_x":
+        if ref_vector is None:
+            raise ValueError("Для операции Xref/x требуется референсный сегмент.")
+        return ref_vector[np.newaxis, :] / (matrix + eps)
+    if operation == "x_div_median":
+        med = np.median(matrix, axis=0, keepdims=True)
+        return matrix / (med + eps)
+    if operation == "zscore":
+        mean = np.mean(matrix, axis=0, keepdims=True)
+        std = np.std(matrix, axis=0, keepdims=True)
+        std = np.where(std == 0, 1.0, std)
+        return (matrix - mean) / std
+    raise ValueError(f"Неизвестная операция предобработки: {operation}")
+
+
 def apply_preprocess_pipeline(
     channels: Iterable[ChannelData],
     profile: Dict[str, object],
@@ -153,32 +212,16 @@ def apply_preprocess_pipeline(
     if matrix.size == 0:
         return []
 
-    operations = profile.get("operations", []) or []
+    operations = normalize_operations_sequence(profile.get("operations", []))
     ref_vector = None
-    if any(op in {"x_div_ref", "ref_div_x"} for op in operations):
+    if any(op in REFERENCE_OPERATIONS for op in operations):
         if reference_channels is None:
             raise ValueError("Для операций Xref требуется выбрать референсный сегмент.")
         ref_vector = _reference_vector(reference_channels, ordered_channels)
 
     eps = 1.27e-127
     for op in operations:
-        if op == "log":
-            matrix = np.where(matrix <= 0, 1.0, matrix)
-            matrix = np.log(matrix)
-        elif op == "x_div_ref":
-            matrix = matrix / (ref_vector[np.newaxis, :] + eps)
-        elif op == "ref_div_x":
-            matrix = ref_vector[np.newaxis, :] / (matrix + eps)
-        elif op == "x_div_median":
-            # Нормируем каждый канал на его собственную медиану по времени.
-            # matrix имеет форму: строки = время, столбцы = каналы.
-            med = np.median(matrix, axis=0, keepdims=True)
-            matrix = matrix / (med + eps)
-        elif op == "zscore":
-            mean = np.mean(matrix, axis=0, keepdims=True)
-            std = np.std(matrix, axis=0, keepdims=True)
-            std = np.where(std == 0, 1.0, std)
-            matrix = (matrix - mean) / std
+        matrix = _apply_preprocess_operation(matrix, op, ref_vector, eps)
 
     result: List[ChannelData] = []
     for idx, ch in enumerate(ordered_channels):
