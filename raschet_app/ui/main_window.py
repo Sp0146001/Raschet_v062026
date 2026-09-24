@@ -404,6 +404,8 @@ class RaschetMainWindow(QMainWindow):
         self.pca_plot_widget.showGrid(x=True, y=True, alpha=0.25)
         self.pca_plot_widget.getPlotItem().setLabel("bottom", "PC1")
         self.pca_plot_widget.getPlotItem().setLabel("left", "PC2")
+        self.pca_plot_widget.scene().sigMouseClicked.connect(self._on_pca_plot_clicked)
+        self.current_pca_scores_df = pd.DataFrame()
         self.pca_plot_stack.addWidget(self.pca_plot_widget)
 
         self.pca_plot_3d_available = gl is not None
@@ -430,6 +432,10 @@ class RaschetMainWindow(QMainWindow):
         self.pca_gas_legend_table.setHorizontalHeaderLabels(["Цвет", "Газ", "Точек"])
         self.pca_gas_legend_table.setMaximumWidth(320)
         pca_legend_layout.addWidget(self.pca_gas_legend_table)
+        self.pca_point_info_label = QLabel("Точка PCA: наведите курсор или щёлкните по точке на 2D-графике. В 3D рядом с точками показаны ID.")
+        self.pca_point_info_label.setWordWrap(True)
+        self.pca_point_info_label.setStyleSheet("color:#444; padding-top:6px;")
+        pca_legend_layout.addWidget(self.pca_point_info_label)
         pca_graph_layout.addWidget(pca_legend_box)
         layout.addLayout(pca_graph_layout, stretch=1)
 
@@ -1413,6 +1419,68 @@ class RaschetMainWindow(QMainWindow):
         view_mode = self.pca_view_mode_combo.currentText() if hasattr(self, "pca_view_mode_combo") else "2D: PC1/PC2"
         self._set_status(f"PCA рассчитан ({view_mode}). Подготовлено признаков: {prepared.matrix.shape[1]}, объектов: {len(scores_df)}.")
 
+    def _pca_point_tooltip(self, row: pd.Series) -> str:
+        parts = [
+            f"ID набора: {row.get('id', '—')}",
+            f"Набор признаков: {row.get('feature_set_name', '—')}",
+            f"Сегмент: {row.get('segment_name', '—')}",
+            f"Газ: {row.get('gas_name', 'Без метки') or 'Без метки'}",
+            f"Температура: {row.get('temperature_c', '—')}",
+            f"Свет: {row.get('light_mode', '—')}",
+        ]
+        for pc in ["PC1", "PC2", "PC3"]:
+            if pc in row.index:
+                try:
+                    parts.append(f"{pc}: {float(row[pc]):.6g}")
+                except Exception:
+                    parts.append(f"{pc}: {row[pc]}")
+        return "\n".join(parts)
+
+    def _set_pca_point_info(self, text: str) -> None:
+        if hasattr(self, "pca_point_info_label"):
+            self.pca_point_info_label.setText(text.replace("\n", " | "))
+
+    def _on_pca_scatter_clicked(self, _plot: object, points: list) -> None:
+        try:
+            if points is None or len(points) == 0:
+                return
+            data = points[0].data()
+        except Exception:
+            data = None
+        if data:
+            self._set_pca_point_info(str(data))
+
+    def _on_pca_plot_clicked(self, event: object) -> None:
+        """Fallback-выбор ближайшей PCA-точки на 2D-графике.
+
+        Нужен потому, что при близких/перекрывающихся точках сигнал клика
+        конкретного ScatterPoint может не сработать или попасть в соседнюю точку.
+        """
+        if not hasattr(self, "pca_plot_stack") or self.pca_plot_stack.currentIndex() != 0:
+            return
+        scores_df = getattr(self, "current_pca_scores_df", pd.DataFrame())
+        if scores_df.empty or "PC1" not in scores_df.columns:
+            return
+        try:
+            mouse_point = self.pca_plot_widget.getPlotItem().vb.mapSceneToView(event.scenePos())
+            x = float(mouse_point.x())
+            y = float(mouse_point.y())
+        except Exception:
+            return
+
+        work = scores_df.copy()
+        work["_pc2_for_pick"] = work["PC2"].astype(float) if "PC2" in work.columns else 0.0
+        view_range = self.pca_plot_widget.getPlotItem().viewRange()
+        x_span = abs(float(view_range[0][1] - view_range[0][0])) or 1.0
+        y_span = abs(float(view_range[1][1] - view_range[1][0])) or 1.0
+        dx = (work["PC1"].astype(float) - x) / x_span
+        dy = (work["_pc2_for_pick"].astype(float) - y) / y_span
+        distances = (dx * dx + dy * dy) ** 0.5
+        nearest_idx = distances.idxmin()
+        if float(distances.loc[nearest_idx]) > 0.08:
+            return
+        self._set_pca_point_info(self._pca_point_tooltip(work.loc[nearest_idx]))
+
     def _pca_color_palette(self) -> List[str]:
         return [
             "#1f77b4",  # синий
@@ -1458,6 +1526,7 @@ class RaschetMainWindow(QMainWindow):
 
     def _clear_pca_plots(self) -> None:
         self.pca_plot_widget.clear()
+        self.current_pca_scores_df = pd.DataFrame()
         if getattr(self, "pca_plot_3d_available", False) and self.pca_plot_3d_widget is not None:
             for item in list(self.pca_plot_3d_widget.items):
                 self.pca_plot_3d_widget.removeItem(item)
@@ -1536,6 +1605,7 @@ class RaschetMainWindow(QMainWindow):
 
     def _plot_pca_scores_2d(self, scores_df: pd.DataFrame) -> None:
         self._clear_pca_plots()
+        self.current_pca_scores_df = scores_df.copy()
         self.pca_plot_stack.setCurrentIndex(0)
         plot_item = self.pca_plot_widget.getPlotItem()
         plot_item.setTitle("PCA: 2D-проекция PC1 / PC2")
@@ -1544,22 +1614,38 @@ class RaschetMainWindow(QMainWindow):
         plot_item.showGrid(x=True, y=True, alpha=0.25)
         if scores_df.empty or "PC1" not in scores_df.columns:
             self._populate_pca_gas_legend([])
+            self._set_pca_point_info("Точка PCA: нет данных.")
             return
+        self._set_pca_point_info("Точка PCA: наведите курсор или щёлкните по точке, чтобы увидеть ID, газ и координаты PC.")
         pc2_col = "PC2" if "PC2" in scores_df.columns else None
         labels = scores_df["gas_name"].fillna("Без метки").replace("", "Без метки")
         legend_rows: List[Dict[str, object]] = []
         for label in sorted(labels.unique()):
             sub = scores_df[labels == label]
-            x = sub["PC1"].to_numpy(dtype=float)
-            y = sub[pc2_col].to_numpy(dtype=float) if pc2_col else [0.0] * len(sub)
             color = self._pca_color_for_gas(label)
-            scatter = pg.ScatterPlotItem(x=x, y=y, pen=pg.mkPen(color, width=1.2), brush=pg.mkBrush(color), size=8)
+            spots = []
+            for _, row in sub.iterrows():
+                x = float(row["PC1"])
+                y = float(row[pc2_col]) if pc2_col else 0.0
+                tooltip = self._pca_point_tooltip(row)
+                spots.append({"pos": (x, y), "data": tooltip})
+            scatter = pg.ScatterPlotItem(
+                spots=spots,
+                pen=pg.mkPen(color, width=1.2),
+                brush=pg.mkBrush(color),
+                size=9,
+                hoverable=True,
+                hoverPen=pg.mkPen("#111111", width=2.0),
+                tip=lambda x=None, y=None, data=None: str(data or ""),
+            )
+            scatter.sigClicked.connect(self._on_pca_scatter_clicked)
             plot_item.addItem(scatter)
             legend_rows.append({"color": color, "gas": str(label), "count": len(sub)})
         self._populate_pca_gas_legend(legend_rows)
 
     def _plot_pca_scores_3d(self, scores_df: pd.DataFrame) -> None:
         self._clear_pca_plots()
+        self.current_pca_scores_df = scores_df.copy()
         self.pca_plot_stack.setCurrentIndex(1)
         if not getattr(self, "pca_plot_3d_available", False) or self.pca_plot_3d_widget is None:
             self._populate_pca_gas_legend([])
@@ -1571,8 +1657,10 @@ class RaschetMainWindow(QMainWindow):
             return
         if scores_df.empty or not all(col in scores_df.columns for col in ["PC1", "PC2", "PC3"]):
             self._populate_pca_gas_legend([])
+            self._set_pca_point_info("Точка PCA: для 3D нужны PC1, PC2 и PC3.")
             return
 
+        self._set_pca_point_info("Точка PCA 3D: рядом с точками показаны ID наборов признаков; подробные координаты см. во вкладке «PCA: проекция».")
         self._setup_pca_3d_scene()
         display_positions = self._prepare_pca_3d_positions(scores_df)
         plot_df = scores_df.copy().reset_index(drop=True)
@@ -1616,6 +1704,19 @@ class RaschetMainWindow(QMainWindow):
                     antialias=True,
                 )
                 self.pca_plot_3d_widget.addItem(cross_item)
+
+            if hasattr(gl, "GLTextItem"):
+                for point, (_, row) in zip(positions, sub.iterrows()):
+                    point_id = str(row.get("id", ""))
+                    if not point_id:
+                        continue
+                    text_pos = (float(point[0]) + 0.28, float(point[1]) + 0.28, float(point[2]) + 0.28)
+                    text_item = gl.GLTextItem(
+                        pos=text_pos,
+                        text=point_id,
+                        color=(rgba.redF(), rgba.greenF(), rgba.blueF(), 1.0),
+                    )
+                    self.pca_plot_3d_widget.addItem(text_item)
             legend_rows.append({"color": color, "gas": str(label), "count": len(sub)})
         self._populate_pca_gas_legend(legend_rows)
 
