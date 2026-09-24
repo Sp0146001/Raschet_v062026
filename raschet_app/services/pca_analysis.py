@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 
 from raschet_app.services.pca_covariance import compute_covariance_matrix, covariance_matrix_to_table
+from raschet_app.services.pca_eigendecomposition import compute_eigendecomposition, eigenvalues_to_table, eigenvectors_to_table
 
 
 SCALE_MODES = {
@@ -38,6 +39,7 @@ def run_pca(feature_df: pd.DataFrame, scale_mode: str) -> Dict[str, pd.DataFrame
     X, mean, std = apply_scaling(feature_df, scale_mode)
     scaled_df = pd.DataFrame(X, index=feature_df.index, columns=feature_df.columns)
     covariance = compute_covariance_matrix(scaled_df)
+    eigendecomposition = compute_eigendecomposition(covariance.matrix)
     U, S, VT = np.linalg.svd(X, full_matrices=False)
 
     n_samples = X.shape[0]
@@ -70,4 +72,6 @@ def run_pca(feature_df: pd.DataFrame, scale_mode: str) -> Dict[str, pd.DataFrame
         "loadings": loadings_df,
         "means": means_df,
         "covariance": covariance_matrix_to_table(covariance.matrix),
+        "eigenvalues": eigenvalues_to_table(eigendecomposition),
+        "eigenvectors": eigenvectors_to_table(eigendecomposition),
     }
