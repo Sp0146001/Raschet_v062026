@@ -52,8 +52,9 @@ from raschet_app.services.db import ProjectDatabase
 from raschet_app.services.exporters import export_dataframe, export_plot
 from raschet_app.services.parser import SmartTxtParser
 from raschet_app.services.features import compute_channel_features
-from raschet_app.services.pca_analysis import SCALE_MODES, run_pca
+from raschet_app.services.pca_pipeline import run_pca_pipeline
 from raschet_app.services.pca_preprocessing import prepare_pca_input
+from raschet_app.services.pca_scaling import SCALE_MODES
 from raschet_app.services.preprocess import OPERATIONS, REFERENCE_OPERATIONS, algorithm_to_text, apply_preprocess_pipeline, parse_preprocess_algorithm, profile_from_json, profile_to_json
 from raschet_app.ui.channel_legend import ChannelLegendWidget
 from raschet_app.ui.graph_style_dialog import GraphStyleDialog
@@ -1398,7 +1399,7 @@ class RaschetMainWindow(QMainWindow):
             scale_mode = SCALE_MODES[self.pca_scaling_combo.currentText()]
             pca_mode = self.pca_view_mode_combo.currentText() if hasattr(self, "pca_view_mode_combo") else "2D: PC1/PC2"
             min_components = 3 if pca_mode.startswith("3D") else 2
-            result = run_pca(prepared.matrix, scale_mode, variance_threshold=0.95, min_components=min_components)
+            result = run_pca_pipeline(prepared.matrix, scale_mode, variance_threshold=0.95, min_components=min_components)
         except Exception as exc:
             QMessageBox.critical(self, "PCA", f"Не удалось выполнить PCA:\n{exc}")
             return
