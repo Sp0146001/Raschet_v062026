@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -1412,6 +1413,32 @@ class RaschetMainWindow(QMainWindow):
         view_mode = self.pca_view_mode_combo.currentText() if hasattr(self, "pca_view_mode_combo") else "2D: PC1/PC2"
         self._set_status(f"PCA рассчитан ({view_mode}). Подготовлено признаков: {prepared.matrix.shape[1]}, объектов: {len(scores_df)}.")
 
+    def _pca_color_palette(self) -> List[str]:
+        return [
+            "#1f77b4",  # синий
+            "#ff7f0e",  # оранжевый
+            "#2ca02c",  # зелёный
+            "#d62728",  # красный
+            "#9467bd",  # фиолетовый
+            "#8c564b",  # коричневый
+            "#e377c2",  # розовый
+            "#7f7f7f",  # серый
+            "#bcbd22",  # оливковый
+            "#17becf",  # бирюзовый
+            "#00429d",
+            "#73a2c6",
+            "#f4777f",
+            "#93003a",
+        ]
+
+    def _pca_color_for_gas(self, gas_label: object) -> str:
+        label = str(gas_label or "").strip() or "Без метки"
+        if label == "Без метки":
+            return "#7f7f7f"
+        palette = self._pca_color_palette()
+        digest = hashlib.md5(label.casefold().encode("utf-8")).hexdigest()
+        return palette[int(digest[:8], 16) % len(palette)]
+
     def _populate_pca_gas_legend(self, rows: List[Dict[str, object]]) -> None:
         if not hasattr(self, "pca_gas_legend_table"):
             return
@@ -1519,14 +1546,13 @@ class RaschetMainWindow(QMainWindow):
             self._populate_pca_gas_legend([])
             return
         pc2_col = "PC2" if "PC2" in scores_df.columns else None
-        color_cycle = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"]
         labels = scores_df["gas_name"].fillna("Без метки").replace("", "Без метки")
         legend_rows: List[Dict[str, object]] = []
-        for idx, label in enumerate(sorted(labels.unique())):
+        for label in sorted(labels.unique()):
             sub = scores_df[labels == label]
             x = sub["PC1"].to_numpy(dtype=float)
             y = sub[pc2_col].to_numpy(dtype=float) if pc2_col else [0.0] * len(sub)
-            color = color_cycle[idx % len(color_cycle)]
+            color = self._pca_color_for_gas(label)
             scatter = pg.ScatterPlotItem(x=x, y=y, pen=pg.mkPen(color, width=1.2), brush=pg.mkBrush(color), size=8)
             plot_item.addItem(scatter)
             legend_rows.append({"color": color, "gas": str(label), "count": len(sub)})
@@ -1554,25 +1580,24 @@ class RaschetMainWindow(QMainWindow):
         plot_df["_y3d"] = display_positions[:, 1]
         plot_df["_z3d"] = display_positions[:, 2]
 
-        color_cycle = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"]
         labels = plot_df["gas_name"].fillna("Без метки").replace("", "Без метки")
         legend_rows: List[Dict[str, object]] = []
-        for idx, label in enumerate(sorted(labels.unique())):
+        for label in sorted(labels.unique()):
             sub = plot_df[labels == label].copy()
             positions = sub[["_x3d", "_y3d", "_z3d"]].to_numpy(dtype=np.float32)
-            color = color_cycle[idx % len(color_cycle)]
+            color = self._pca_color_for_gas(label)
             rgba = QColor(color)
             gl_color = np.tile(
                 np.array([rgba.redF(), rgba.greenF(), rgba.blueF(), 0.95], dtype=np.float32),
                 (len(positions), 1),
             )
-            scatter = gl.GLScatterPlotItem(pos=positions, color=gl_color, size=14.0, pxMode=True)
+            scatter = gl.GLScatterPlotItem(pos=positions, color=gl_color, size=12.0, pxMode=True)
             self.pca_plot_3d_widget.addItem(scatter)
 
-            # Дублируем точки маленькими 3D-крестами: они лучше видны при совпадении
-            # координат и на разных драйверах OpenGL.
+            # Дублируем точки короткими 3D-крестами: они лучше видны при совпадении
+            # координат и на разных драйверах OpenGL, но не перегружают график.
             cross_segments = []
-            arm = 0.35
+            arm = 0.18
             for point in positions:
                 x, y, z = point
                 cross_segments.extend(
