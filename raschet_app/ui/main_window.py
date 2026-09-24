@@ -11,7 +11,6 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFileDialog,
-    QFormLayout,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -46,7 +45,7 @@ from raschet_app.services.exporters import export_dataframe, export_plot
 from raschet_app.services.parser import SmartTxtParser
 from raschet_app.services.features import compute_channel_features
 from raschet_app.services.pca_analysis import SCALE_MODES, run_pca
-from raschet_app.services.preprocess import OPERATIONS, apply_preprocess_pipeline, profile_from_json, profile_to_json
+from raschet_app.services.preprocess import OPERATIONS, apply_preprocess_pipeline, profile_to_json
 from raschet_app.ui.channel_legend import ChannelLegendWidget
 from raschet_app.ui.graph_style_dialog import GraphStyleDialog
 from raschet_app.ui.plot_widget import FastPlotWidget
@@ -223,7 +222,7 @@ class RaschetMainWindow(QMainWindow):
 
         top = QHBoxLayout()
 
-        left_box = QGroupBox("Выбор сегмента и профиля")
+        left_box = QGroupBox("Выбор сегмента для предобработки")
         left_layout = QVBoxLayout(left_box)
         self.pre_segments_table = QTableWidget()
         TableUtils.setup_table(self.pre_segments_table)
@@ -231,17 +230,14 @@ class RaschetMainWindow(QMainWindow):
         left_layout.addWidget(QLabel("Сегменты из БД проекта:"))
         left_layout.addWidget(self.pre_segments_table)
 
-        form = QFormLayout()
-        self.pre_profile_name_edit = QLineEdit()
-        self.pre_profiles_combo = QComboBox()
-        self.pre_reference_combo = QComboBox()
-        self.pre_reference_combo.addItem("Без референса", None)
-        form.addRow("Имя профиля:", self.pre_profile_name_edit)
-        form.addRow("Сохранённый профиль:", self.pre_profiles_combo)
-        form.addRow("Референсный сегмент:", self.pre_reference_combo)
-        left_layout.addLayout(form)
+        preprocess_hint = QLabel(
+            "Профили и ручной выбор референса убраны. На следующем этапе здесь появится конструктор алгоритма обработки."
+        )
+        preprocess_hint.setWordWrap(True)
+        preprocess_hint.setStyleSheet("color:#555;")
+        left_layout.addWidget(preprocess_hint)
 
-        ops_box = QGroupBox("Операции предобработки (выполняются сверху вниз)")
+        ops_box = QGroupBox("Операции предобработки (временно выполняются сверху вниз)")
         ops_layout = QVBoxLayout(ops_box)
         self.pre_op_checks: Dict[str, QCheckBox] = {}
         for op_key, op_label in OPERATIONS:
@@ -249,18 +245,6 @@ class RaschetMainWindow(QMainWindow):
             self.pre_op_checks[op_key] = cb
             ops_layout.addWidget(cb)
         left_layout.addWidget(ops_box)
-
-        profile_btns = QHBoxLayout()
-        self.pre_save_profile_btn = QPushButton("Сохранить профиль")
-        self.pre_save_profile_btn.clicked.connect(self.save_preprocess_profile)
-        self.pre_load_profile_btn = QPushButton("Загрузить профиль")
-        self.pre_load_profile_btn.clicked.connect(self.load_selected_preprocess_profile)
-        self.pre_delete_profile_btn = QPushButton("Удалить профиль")
-        self.pre_delete_profile_btn.clicked.connect(self.delete_selected_preprocess_profile)
-        profile_btns.addWidget(self.pre_save_profile_btn)
-        profile_btns.addWidget(self.pre_load_profile_btn)
-        profile_btns.addWidget(self.pre_delete_profile_btn)
-        left_layout.addLayout(profile_btns)
 
         run_btns = QHBoxLayout()
         self.pre_apply_btn = QPushButton("Применить к выбранному сегменту")
@@ -283,7 +267,7 @@ class RaschetMainWindow(QMainWindow):
 
         right_box = QGroupBox("Предпросмотр предобработки")
         right_layout = QVBoxLayout(right_box)
-        self.preprocess_summary_label = QLabel("Сначала выберите сегмент из БД и профиль предобработки.")
+        self.preprocess_summary_label = QLabel("Сначала выберите сегмент из БД и операции предобработки.")
         self.preprocess_summary_label.setWordWrap(True)
         self.preprocess_summary_label.setStyleSheet("color:#555;")
         self.preprocess_plot_widget = FastPlotWidget()
@@ -766,9 +750,6 @@ class RaschetMainWindow(QMainWindow):
         self.open_source_from_current_btn.setEnabled(project_open and self.current_source_file_id is not None)
         self.pre_refresh_btn.setEnabled(project_open)
         self.pre_apply_btn.setEnabled(project_open)
-        self.pre_save_profile_btn.setEnabled(project_open)
-        self.pre_load_profile_btn.setEnabled(project_open)
-        self.pre_delete_profile_btn.setEnabled(project_open)
         self.pre_save_run_btn.setEnabled(project_open and bool(self.current_preprocessed_run_channels))
         self.pre_compute_features_btn.setEnabled(project_open)
         self.pre_save_features_btn.setEnabled(project_open and not self.current_features_wide_df.empty)
@@ -1051,27 +1032,14 @@ class RaschetMainWindow(QMainWindow):
 
     def _build_preprocess_profile_payload(self) -> Dict[str, object]:
         operations = [key for key, _label in OPERATIONS if self.pre_op_checks[key].isChecked()]
-        reference_data = self.pre_reference_combo.currentData()
-        reference_segment_id = reference_data if isinstance(reference_data, int) else None
+        op_labels = dict(OPERATIONS)
+        algorithm = " -> ".join(op_labels.get(op, op) for op in operations) or "R"
         return {
-            "profile_name": self.pre_profile_name_edit.text().strip() or "Профиль без имени",
+            "profile_name": algorithm,
+            "algorithm": algorithm,
             "operations": operations,
-            "reference_segment_id": reference_segment_id,
+            "reference_segment_id": None,
         }
-
-    def _apply_preprocess_profile_to_ui(self, profile: Dict[str, object]) -> None:
-        self.pre_profile_name_edit.setText(str(profile.get("profile_name", "")))
-        selected_ops = set(profile.get("operations", []))
-        for key, _label in OPERATIONS:
-            self.pre_op_checks[key].setChecked(key in selected_ops)
-        ref_id = profile.get("reference_segment_id")
-        if ref_id is None:
-            self.pre_reference_combo.setCurrentIndex(0)
-        else:
-            for i in range(self.pre_reference_combo.count()):
-                if self.pre_reference_combo.itemData(i) == ref_id:
-                    self.pre_reference_combo.setCurrentIndex(i)
-                    break
 
     def refresh_preprocessing_views(self, segments_df: Optional[pd.DataFrame] = None) -> None:
         if isinstance(segments_df, bool):
@@ -1080,10 +1048,7 @@ class RaschetMainWindow(QMainWindow):
             TableUtils.populate_from_dataframe(self.pre_segments_table, pd.DataFrame(), index_visible=False)
             TableUtils.populate_from_dataframe(self.pre_runs_table, pd.DataFrame(), index_visible=False)
             TableUtils.populate_from_dataframe(self.current_features_table, pd.DataFrame(), index_visible=False)
-            self.pre_profiles_combo.clear()
-            self.pre_reference_combo.clear()
-            self.pre_reference_combo.addItem("Без референса", None)
-            self.preprocess_summary_label.setText("Сначала выберите сегмент из БД и профиль предобработки.")
+            self.preprocess_summary_label.setText("Сначала откройте проект и выберите сегмент для предобработки.")
             self.current_preprocessed_run_id = None
             self.current_preprocessed_run_channels = []
             self.current_features_wide_df = pd.DataFrame()
@@ -1095,6 +1060,9 @@ class RaschetMainWindow(QMainWindow):
         if segments_df is None:
             segments_df = self.db.list_segments()
             if not segments_df.empty:
+                segments_df = segments_df.copy()
+                if "is_reference" in segments_df.columns:
+                    segments_df["is_reference"] = segments_df["is_reference"].fillna(0).astype(int).map({1: "Да", 0: "Нет"})
                 segments_df = segments_df.rename(
                     columns={
                         "id": "ID",
@@ -1104,33 +1072,28 @@ class RaschetMainWindow(QMainWindow):
                         "t_end": "Конец, s",
                         "gas_name": "Газ",
                         "temperature_c": "Температура, °C",
+                        "is_reference": "Референс",
                     }
-                )[["ID", "Сегмент", "Источник", "Начало, s", "Конец, s", "Газ", "Температура, °C"]]
+                )
+                columns = ["ID", "Сегмент", "Источник", "Начало, s", "Конец, s", "Газ", "Температура, °C"]
+                if "Референс" in segments_df.columns:
+                    columns.append("Референс")
+                segments_df = segments_df[columns]
         TableUtils.populate_from_dataframe(self.pre_segments_table, segments_df, index_visible=False)
-
-        profiles_df = self.db.list_preprocess_profiles()
-        self.pre_profiles_combo.clear()
-        for _, row in profiles_df.iterrows():
-            self.pre_profiles_combo.addItem(f"{row['id']}: {row['profile_name']}", int(row['id']))
-
-        self.pre_reference_combo.clear()
-        self.pre_reference_combo.addItem("Без референса", None)
-        segments_for_ref = self.db.list_segments()
-        for _, row in segments_for_ref.iterrows():
-            self.pre_reference_combo.addItem(f"{row['id']}: {row['segment_name']}", int(row['id']))
 
         runs_df = self.db.list_preprocessed_runs()
         if not runs_df.empty:
+            runs_df = runs_df.copy()
+            runs_df["reference_segment_id"] = runs_df["reference_segment_id"].fillna("")
             runs_df = runs_df.rename(
                 columns={
                     "id": "ID запуска",
-                    "run_name": "Название",
+                    "run_name": "Алгоритм / название",
                     "segment_name": "Сегмент",
-                    "profile_name": "Профиль",
                     "reference_segment_id": "ID референса",
                     "created_at": "Создан",
                 }
-            )[["ID запуска", "Название", "Сегмент", "Профиль", "ID референса", "Создан"]]
+            )[["ID запуска", "Алгоритм / название", "Сегмент", "ID референса", "Создан"]]
         TableUtils.populate_from_dataframe(self.pre_runs_table, runs_df, index_visible=False)
         self.refresh_feature_views()
         self._update_ui_state()
@@ -1221,15 +1184,15 @@ class RaschetMainWindow(QMainWindow):
             QMessageBox.information(self, "Признаки", "Сначала рассчитайте признаки.")
             return
         try:
-            profile_id = self.pre_profiles_combo.currentData() if isinstance(self.pre_profiles_combo.currentData(), int) else None
-            base_name = self.pre_profile_name_edit.text().strip() or "feature_set"
-            feature_set_name = f"{base_name}_{self.current_feature_source_kind}_{self.current_feature_segment_id or 'unknown'}"
+            payload = self.current_preprocessed_profile_payload or self._build_preprocess_profile_payload()
+            algorithm = str(payload.get("algorithm") or payload.get("profile_name") or "R").strip() or "R"
+            feature_set_name = f"{algorithm}_{self.current_feature_source_kind}_{self.current_feature_segment_id or 'unknown'}"
             feature_set_id = self.db.save_feature_set(
                 feature_set_name=feature_set_name,
                 features_long=self.current_features_long_df,
                 segment_id=self.current_feature_segment_id,
                 run_id=self.current_feature_run_id,
-                profile_id=profile_id,
+                profile_id=None,
                 source_kind=self.current_feature_source_kind,
                 note="Рассчитано в Raschet",
             )
@@ -1312,57 +1275,6 @@ class RaschetMainWindow(QMainWindow):
             scatter = pg.ScatterPlotItem(x=x, y=y, pen=pg.mkPen(color_cycle[idx % len(color_cycle)], width=1.2), brush=pg.mkBrush(color_cycle[idx % len(color_cycle)]), size=8, name=str(label))
             plot_item.addItem(scatter)
 
-    def save_preprocess_profile(self) -> None:
-        if not self._ensure_project_open():
-            return
-        payload = self._build_preprocess_profile_payload()
-        name = str(payload.get("profile_name", "")).strip()
-        if not name:
-            QMessageBox.information(self, "Профиль предобработки", "Введите имя профиля.")
-            return
-        try:
-            existing_id = self.pre_profiles_combo.currentData()
-            if isinstance(existing_id, int) and self.pre_profiles_combo.currentText().endswith(name):
-                self.db.update_preprocess_profile(existing_id, name, profile_to_json(payload))
-                profile_id = existing_id
-            else:
-                profile_id = self.db.save_preprocess_profile(name, profile_to_json(payload))
-            self.refresh_preprocessing_views()
-            self._set_status(f"Профиль предобработки сохранён: ID={profile_id}")
-        except Exception as exc:
-            QMessageBox.critical(self, "Профиль предобработки", f"Не удалось сохранить профиль:\n{exc}")
-
-    def load_selected_preprocess_profile(self) -> None:
-        if not self._ensure_project_open():
-            return
-        profile_id = self.pre_profiles_combo.currentData()
-        if not isinstance(profile_id, int):
-            QMessageBox.information(self, "Профиль предобработки", "Выберите сохранённый профиль.")
-            return
-        try:
-            profile_record = self.db.load_preprocess_profile(profile_id)
-            profile = profile_from_json(profile_record["pipeline_json"])
-            profile["profile_name"] = profile_record["profile_name"]
-            self._apply_preprocess_profile_to_ui(profile)
-            self._set_status(f"Профиль загружен: {profile_record['profile_name']}")
-        except Exception as exc:
-            QMessageBox.critical(self, "Профиль предобработки", f"Не удалось загрузить профиль:\n{exc}")
-
-    def delete_selected_preprocess_profile(self) -> None:
-        if not self._ensure_project_open():
-            return
-        profile_id = self.pre_profiles_combo.currentData()
-        if not isinstance(profile_id, int):
-            return
-        confirm = QMessageBox.question(self, "Удаление профиля", f"Удалить профиль ID={profile_id}?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        if confirm != QMessageBox.StandardButton.Yes:
-            return
-        try:
-            self.db.delete_preprocess_profile(profile_id)
-            self.refresh_preprocessing_views()
-        except Exception as exc:
-            QMessageBox.critical(self, "Удаление профиля", f"Не удалось удалить профиль:\n{exc}")
-
     def _selected_preprocess_segment_id(self) -> Optional[int]:
         row = self.pre_segments_table.currentRow()
         if row < 0:
@@ -1385,18 +1297,21 @@ class RaschetMainWindow(QMainWindow):
         try:
             parsed = self.db.load_segment(segment_id)
             payload = self._build_preprocess_profile_payload()
-            ref_id = payload.get("reference_segment_id")
-            ref_channels = None
-            if isinstance(ref_id, int):
-                ref_parsed = self.db.load_segment(ref_id)
-                ref_channels = ref_parsed.channels
-            processed_channels = apply_preprocess_pipeline(parsed.channels, payload, ref_channels)
+            operations = payload.get("operations", []) or []
+            if any(op in {"x_div_ref", "ref_div_x"} for op in operations):
+                QMessageBox.information(
+                    self,
+                    "Предобработка",
+                    "Ручной выбор референса убран. Операции x/Xref и Xref/x будут подключены позже через автоматический референсный сегмент.",
+                )
+                return
+            processed_channels = apply_preprocess_pipeline(parsed.channels, payload, reference_channels=None)
         except Exception as exc:
             QMessageBox.critical(self, "Предобработка", f"Не удалось выполнить предобработку:\n{exc}")
             return
         self.current_preprocessed_run_channels = processed_channels
         self.current_preprocessed_segment_id = segment_id
-        self.current_preprocessed_reference_id = payload.get("reference_segment_id") if isinstance(payload.get("reference_segment_id"), int) else None
+        self.current_preprocessed_reference_id = None
         self.current_preprocessed_profile_payload = payload
         self.current_preprocessed_run_id = -1
         self.preprocess_plot_widget.apply_graph_style(self._current_graph_style_payload())
@@ -1417,17 +1332,18 @@ class RaschetMainWindow(QMainWindow):
             QMessageBox.information(self, "Предобработка", "Сначала выполните предобработку выбранного сегмента.")
             return
         try:
-            profile_id = self.pre_profiles_combo.currentData() if isinstance(self.pre_profiles_combo.currentData(), int) else None
-            run_name = f"{payload.get('profile_name', 'profile')}_segment_{segment_id}"
+            algorithm = str(payload.get("algorithm") or payload.get("profile_name") or "R").strip() or "R"
+            run_name = f"{algorithm}_segment_{segment_id}"
             run_id = self.db.save_preprocessed_run(
                 segment_id=segment_id,
                 run_name=run_name,
                 profile_json=profile_to_json(payload),
                 channels=channels,
-                profile_id=profile_id,
-                reference_segment_id=getattr(self, 'current_preprocessed_reference_id', None),
+                profile_id=None,
+                reference_segment_id=None,
             )
             self.current_preprocessed_run_id = run_id
+            self.current_preprocessed_reference_id = None
             self.refresh_preprocessing_views()
             self._set_status(f"Результат предобработки сохранён: ID={run_id}")
         except Exception as exc:
