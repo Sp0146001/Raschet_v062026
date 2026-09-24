@@ -45,7 +45,7 @@ from raschet_app.services.exporters import export_dataframe, export_plot
 from raschet_app.services.parser import SmartTxtParser
 from raschet_app.services.features import compute_channel_features
 from raschet_app.services.pca_analysis import SCALE_MODES, run_pca
-from raschet_app.services.preprocess import OPERATIONS, apply_preprocess_pipeline, profile_to_json
+from raschet_app.services.preprocess import OPERATIONS, algorithm_to_text, apply_preprocess_pipeline, parse_preprocess_algorithm, profile_to_json
 from raschet_app.ui.channel_legend import ChannelLegendWidget
 from raschet_app.ui.graph_style_dialog import GraphStyleDialog
 from raschet_app.ui.plot_widget import FastPlotWidget
@@ -274,8 +274,9 @@ class RaschetMainWindow(QMainWindow):
         ops_layout.addLayout(constructor_layout)
         ops_layout.addWidget(QLabel("Алгоритм:"))
         self.pre_algorithm_edit = QLineEdit("R")
-        self.pre_algorithm_edit.setReadOnly(True)
-        self.pre_algorithm_edit.setToolTip("Пока поле заполняется автоматически. Ручной ввод будет подключён на этапе парсера алгоритма.")
+        self.pre_algorithm_edit.setReadOnly(False)
+        self.pre_algorithm_edit.setToolTip("Можно набрать алгоритм вручную: операции разделяются через ->, запятую или точку с запятой.")
+        self.pre_algorithm_edit.editingFinished.connect(self._sync_preprocess_algorithm_from_edit)
         ops_layout.addWidget(self.pre_algorithm_edit)
         self._refresh_preprocess_algorithm_display()
         left_layout.addWidget(ops_box)
@@ -1068,9 +1069,7 @@ class RaschetMainWindow(QMainWindow):
         return dict(OPERATIONS).get(op_key, op_key)
 
     def _preprocess_algorithm_text(self) -> str:
-        if not self.pre_algorithm_ops:
-            return "R"
-        return " -> ".join(self._operation_label(op) for op in self.pre_algorithm_ops)
+        return algorithm_to_text(self.pre_algorithm_ops)
 
     def _refresh_preprocess_algorithm_display(self) -> None:
         algorithm = self._preprocess_algorithm_text()
@@ -1079,11 +1078,28 @@ class RaschetMainWindow(QMainWindow):
         self.pre_remove_last_op_btn.setEnabled(bool(self.pre_algorithm_ops))
         self.pre_clear_algorithm_btn.setEnabled(bool(self.pre_algorithm_ops))
 
+    def _sync_preprocess_algorithm_from_edit(self) -> bool:
+        try:
+            operations = parse_preprocess_algorithm(self.pre_algorithm_edit.text())
+        except ValueError as exc:
+            self.pre_algorithm_edit.setStyleSheet("border: 1px solid #c62828;")
+            self.pre_algorithm_chain_label.setText(f"Ошибка алгоритма: {exc}")
+            self._set_status("Ошибка в поле «Алгоритм». Проверьте порядок операций.")
+            return False
+        self.pre_algorithm_ops = operations
+        self.pre_algorithm_edit.setStyleSheet("")
+        self._refresh_preprocess_algorithm_display()
+        return True
+
     def _add_preprocess_operation(self, op_key: str) -> None:
+        if not self._sync_preprocess_algorithm_from_edit():
+            return
         self.pre_algorithm_ops.append(op_key)
         self._refresh_preprocess_algorithm_display()
 
     def _remove_last_preprocess_operation(self) -> None:
+        if not self._sync_preprocess_algorithm_from_edit():
+            return
         if self.pre_algorithm_ops:
             self.pre_algorithm_ops.pop()
         self._refresh_preprocess_algorithm_display()
@@ -1091,8 +1107,11 @@ class RaschetMainWindow(QMainWindow):
     def _clear_preprocess_algorithm(self) -> None:
         self.pre_algorithm_ops.clear()
         self._refresh_preprocess_algorithm_display()
+        self.pre_algorithm_edit.setStyleSheet("")
 
     def _build_preprocess_profile_payload(self) -> Dict[str, object]:
+        if not self._sync_preprocess_algorithm_from_edit():
+            raise ValueError("В поле «Алгоритм» есть нераспознанные операции.")
         operations = list(self.pre_algorithm_ops)
         algorithm = self._preprocess_algorithm_text()
         return {

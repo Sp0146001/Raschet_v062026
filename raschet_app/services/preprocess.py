@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from typing import Dict, Iterable, List, Optional, Tuple
+import re
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -19,6 +20,92 @@ OPERATIONS = [
 
 def operations_map() -> Dict[str, str]:
     return dict(OPERATIONS)
+
+
+def algorithm_to_text(operations: Sequence[str]) -> str:
+    labels = operations_map()
+    known_keys = set(labels)
+    normalized_ops = [op for op in operations if op in known_keys]
+    if not normalized_ops:
+        return "R"
+    return " -> ".join(labels[op] for op in normalized_ops)
+
+
+def _normalize_algorithm_token(token: str) -> str:
+    return (
+        token.strip()
+        .lower()
+        .replace(" ", "")
+        .replace("−", "-")
+        .replace("–", "-")
+        .replace("—", "-")
+    )
+
+
+def parse_preprocess_algorithm(text: str) -> List[str]:
+    raw_text = (text or "").strip()
+    if not raw_text or _normalize_algorithm_token(raw_text) in {"r", "безпредобработки", "none", "нет"}:
+        return []
+
+    aliases = {
+        "log": "log",
+        "logx": "log",
+        "log(x)": "log",
+        "ln": "log",
+        "ln(x)": "log",
+        "x_div_ref": "x_div_ref",
+        "x/xref": "x_div_ref",
+        "x÷xref": "x_div_ref",
+        "xdivxref": "x_div_ref",
+        "xdivref": "x_div_ref",
+        "xref_div_x": "ref_div_x",
+        "ref_div_x": "ref_div_x",
+        "xref/x": "ref_div_x",
+        "xref÷x": "ref_div_x",
+        "xrefdivx": "ref_div_x",
+        "x_div_median": "x_div_median",
+        "x/median": "x_div_median",
+        "x/median(x)": "x_div_median",
+        "x÷median(x)": "x_div_median",
+        "xdivmedian": "x_div_median",
+        "xdivmedian(x)": "x_div_median",
+        "zscore": "zscore",
+        "z-score": "zscore",
+        "standardize": "zscore",
+        "standardization": "zscore",
+        "стандартизация": "zscore",
+        "(x-mean(x))/std(x)": "zscore",
+        "x-mean(x)/std(x)": "zscore",
+        "(x-mean)/std": "zscore",
+    }
+    for key, label in OPERATIONS:
+        aliases[_normalize_algorithm_token(key)] = key
+        aliases[_normalize_algorithm_token(label)] = key
+
+    parts = re.split(r"\s*(?:->|→|;|,|\n|\r)+\s*", raw_text)
+    operations: List[str] = []
+    unknown: List[str] = []
+    for part in parts:
+        token = part.strip()
+        if not token:
+            continue
+        normalized = _normalize_algorithm_token(token)
+        if normalized in {"r", "безпредобработки", "none", "нет"}:
+            continue
+        op_key = aliases.get(normalized)
+        if op_key is None:
+            unknown.append(token)
+        else:
+            operations.append(op_key)
+
+    if unknown:
+        supported = ", ".join(["R"] + [label for _, label in OPERATIONS])
+        raise ValueError(
+            "Не удалось распознать операцию(и) в алгоритме: "
+            + "; ".join(unknown)
+            + f". Поддерживаются: {supported}. Разделяйте операции через ->, запятую или точку с запятой."
+        )
+    return operations
 
 
 def profile_to_json(profile: Dict[str, object]) -> str:
