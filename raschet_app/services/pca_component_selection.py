@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+
 import numpy as np
 import pandas as pd
 
@@ -16,11 +17,13 @@ class ComponentSelectionResult:
 def select_components(
     eigenvalues: np.ndarray,
     variance_threshold: float = 0.95,
+    min_components: int = 2,
 ) -> ComponentSelectionResult:
     """Выбрать число главных компонент по порогу накопленной дисперсии.
 
     По умолчанию выбирается минимальное число компонент, которое объясняет
-    не меньше 95% общей дисперсии.
+    не меньше 95% общей дисперсии, но не меньше двух компонент, если это
+    позволяет размерность данных. Это нужно для стабильного 2D-представления.
     """
     values = np.asarray(eigenvalues, dtype=float)
     if values.size == 0:
@@ -38,10 +41,12 @@ def select_components(
 
     max_components = len(values)
     threshold = min(max(float(variance_threshold), 0.0), 1.0)
+    effective_min_components = min(max(int(min_components), 1), max_components)
 
     reached = np.where(cumulative_ratio >= threshold)[0]
-    n_components = int(reached[0] + 1) if len(reached) else max_components
-    mode = f"Авто по порогу {threshold * 100:.1f}%"
+    auto_components = int(reached[0] + 1) if len(reached) else max_components
+    n_components = min(max(auto_components, effective_min_components), max_components)
+    mode = f"Авто по порогу {threshold * 100:.1f}%, минимум {effective_min_components} PC"
 
     rows = []
     for idx, value in enumerate(values):
