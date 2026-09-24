@@ -6,7 +6,7 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 import pyqtgraph as pg
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QCloseEvent, QDoubleValidator, QIcon
+from PySide6.QtGui import QAction, QCloseEvent, QColor, QDoubleValidator, QIcon
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QStatusBar,
     QTabWidget,
     QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -349,14 +350,10 @@ class RaschetMainWindow(QMainWindow):
         info.setWordWrap(True)
         layout.addWidget(info)
 
-        filter_box = QGroupBox("Выборка для PCA")
+        filter_box = QGroupBox("Настройки PCA")
         filter_layout = QGridLayout(filter_box)
         self.pca_source_kind_combo = QComboBox()
         self.pca_source_kind_combo.addItems(["Все источники", "segment", "preprocessed_run"])
-        self.pca_gas_filter_edit = QLineEdit()
-        self.pca_temp_filter_edit = QLineEdit()
-        self.pca_light_filter_combo = QComboBox()
-        self.pca_light_filter_combo.addItems(["Все", "", "OFF", "ON"])
         self.pca_scaling_combo = QComboBox()
         self.pca_scaling_combo.addItems(list(SCALE_MODES.keys()))
         self.pca_variance_threshold_label = QLabel("95 %")
@@ -367,18 +364,12 @@ class RaschetMainWindow(QMainWindow):
         self.pca_run_btn.clicked.connect(self.run_pca_on_filtered_feature_sets)
         filter_layout.addWidget(QLabel("Источник признаков:"), 0, 0)
         filter_layout.addWidget(self.pca_source_kind_combo, 0, 1)
-        filter_layout.addWidget(QLabel("Газ содержит:"), 0, 2)
-        filter_layout.addWidget(self.pca_gas_filter_edit, 0, 3)
-        filter_layout.addWidget(QLabel("Температура содержит:"), 1, 0)
-        filter_layout.addWidget(self.pca_temp_filter_edit, 1, 1)
-        filter_layout.addWidget(QLabel("Свет:"), 1, 2)
-        filter_layout.addWidget(self.pca_light_filter_combo, 1, 3)
-        filter_layout.addWidget(QLabel("Масштабирование:"), 2, 0)
-        filter_layout.addWidget(self.pca_scaling_combo, 2, 1)
-        filter_layout.addWidget(QLabel("Порог дисперсии:"), 2, 2)
-        filter_layout.addWidget(self.pca_variance_threshold_label, 2, 3)
-        filter_layout.addWidget(self.pca_refresh_btn, 3, 2)
-        filter_layout.addWidget(self.pca_run_btn, 3, 3)
+        filter_layout.addWidget(QLabel("Масштабирование:"), 0, 2)
+        filter_layout.addWidget(self.pca_scaling_combo, 0, 3)
+        filter_layout.addWidget(QLabel("Порог дисперсии:"), 1, 0)
+        filter_layout.addWidget(self.pca_variance_threshold_label, 1, 1)
+        filter_layout.addWidget(self.pca_refresh_btn, 1, 2)
+        filter_layout.addWidget(self.pca_run_btn, 1, 3)
         layout.addWidget(filter_box)
 
         self.features_sets_table = QTableWidget()
@@ -395,12 +386,24 @@ class RaschetMainWindow(QMainWindow):
         actions.addStretch(1)
         layout.addLayout(actions)
 
+        pca_graph_layout = QHBoxLayout()
         self.pca_plot_widget = pg.PlotWidget()
         self.pca_plot_widget.setBackground("w")
         self.pca_plot_widget.showGrid(x=True, y=True, alpha=0.25)
         self.pca_plot_widget.getPlotItem().setLabel("bottom", "PC1")
         self.pca_plot_widget.getPlotItem().setLabel("left", "PC2")
-        layout.addWidget(self.pca_plot_widget, stretch=1)
+        pca_graph_layout.addWidget(self.pca_plot_widget, stretch=1)
+
+        pca_legend_box = QGroupBox("Точки PCA")
+        pca_legend_layout = QVBoxLayout(pca_legend_box)
+        self.pca_gas_legend_table = QTableWidget()
+        TableUtils.setup_table(self.pca_gas_legend_table)
+        self.pca_gas_legend_table.setColumnCount(3)
+        self.pca_gas_legend_table.setHorizontalHeaderLabels(["Цвет", "Газ", "Точек"])
+        self.pca_gas_legend_table.setMaximumWidth(320)
+        pca_legend_layout.addWidget(self.pca_gas_legend_table)
+        pca_graph_layout.addWidget(pca_legend_box)
+        layout.addLayout(pca_graph_layout, stretch=1)
 
         self.analytics_tabs = QTabWidget()
         self.features_values_table = QTableWidget()
@@ -1221,6 +1224,8 @@ class RaschetMainWindow(QMainWindow):
             if hasattr(self, "pca_new_coordinates_table"):
                 TableUtils.populate_from_dataframe(self.pca_new_coordinates_table, pd.DataFrame(), index_visible=False)
             self.pca_plot_widget.clear()
+            if hasattr(self, "pca_gas_legend_table"):
+                self._populate_pca_gas_legend([])
             return
         sets_df_raw = self.db.list_feature_sets()
         filtered = sets_df_raw.copy()
@@ -1229,16 +1234,8 @@ class RaschetMainWindow(QMainWindow):
             filtered = filtered[filtered["source_kind"] == "segment"]
         elif source_kind == "preprocessed_run":
             filtered = filtered[filtered["source_kind"] == "preprocessed_run"]
-        gas_filter = self.pca_gas_filter_edit.text().strip().lower() if hasattr(self, 'pca_gas_filter_edit') else ""
-        if gas_filter:
-            filtered = filtered[filtered["gas_name"].fillna("").astype(str).str.lower().str.contains(gas_filter, na=False)]
-        temp_filter = self.pca_temp_filter_edit.text().strip().lower() if hasattr(self, 'pca_temp_filter_edit') else ""
-        if temp_filter:
-            filtered = filtered[filtered["temperature_c"].fillna("").astype(str).str.lower().str.contains(temp_filter, na=False)]
-        light_filter = self.pca_light_filter_combo.currentText() if hasattr(self, 'pca_light_filter_combo') else "Все"
-        if light_filter != "Все":
-            filtered = filtered[filtered["light_mode"].fillna("") == light_filter]
-
+        # Газ, температура и свет больше не используются как фильтры PCA.
+        # Они остаются в таблицах и на графике как поясняющие метки эксперимента.
         display_df = filtered.copy()
         if not display_df.empty:
             display_df = display_df.rename(
@@ -1383,24 +1380,53 @@ class RaschetMainWindow(QMainWindow):
         self.main_sections.setCurrentWidget(self.analytics_page)
         self._set_status(f"PCA рассчитан. Подготовлено признаков: {prepared.matrix.shape[1]}, объектов: {len(scores_df)}.")
 
+    def _populate_pca_gas_legend(self, rows: List[Dict[str, object]]) -> None:
+        if not hasattr(self, "pca_gas_legend_table"):
+            return
+        self.pca_gas_legend_table.setRowCount(len(rows))
+        self.pca_gas_legend_table.setColumnCount(3)
+        self.pca_gas_legend_table.setHorizontalHeaderLabels(["Цвет", "Газ", "Точек"])
+        for row_idx, row in enumerate(rows):
+            color = str(row.get("color", "#999999"))
+            color_item = QTableWidgetItem("")
+            color_item.setBackground(QColor(color))
+            gas_item = QTableWidgetItem(str(row.get("gas", "")))
+            count_item = QTableWidgetItem(str(row.get("count", "")))
+            self.pca_gas_legend_table.setItem(row_idx, 0, color_item)
+            self.pca_gas_legend_table.setItem(row_idx, 1, gas_item)
+            self.pca_gas_legend_table.setItem(row_idx, 2, count_item)
+        self.pca_gas_legend_table.resizeColumnsToContents()
+
     def _plot_pca_scores(self, scores_df: pd.DataFrame) -> None:
         self.pca_plot_widget.clear()
         plot_item = self.pca_plot_widget.getPlotItem()
-        plot_item.setTitle("PCA scores")
+        plot_item.setTitle("PCA: проекция")
         plot_item.setLabel("bottom", "PC1")
         plot_item.setLabel("left", "PC2")
         plot_item.showGrid(x=True, y=True, alpha=0.25)
         if scores_df.empty or "PC1" not in scores_df.columns:
+            self._populate_pca_gas_legend([])
             return
         pc2_col = "PC2" if "PC2" in scores_df.columns else None
         color_cycle = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"]
-        labels = scores_df["gas_name"].fillna("Без метки")
+        labels = scores_df["gas_name"].fillna("Без метки").replace("", "Без метки")
+        legend_rows: List[Dict[str, object]] = []
         for idx, label in enumerate(sorted(labels.unique())):
             sub = scores_df[labels == label]
             x = sub["PC1"].to_numpy(dtype=float)
             y = sub[pc2_col].to_numpy(dtype=float) if pc2_col else [0.0] * len(sub)
-            scatter = pg.ScatterPlotItem(x=x, y=y, pen=pg.mkPen(color_cycle[idx % len(color_cycle)], width=1.2), brush=pg.mkBrush(color_cycle[idx % len(color_cycle)]), size=8, name=str(label))
+            color = color_cycle[idx % len(color_cycle)]
+            scatter = pg.ScatterPlotItem(
+                x=x,
+                y=y,
+                pen=pg.mkPen(color, width=1.2),
+                brush=pg.mkBrush(color),
+                size=8,
+                name=str(label),
+            )
             plot_item.addItem(scatter)
+            legend_rows.append({"color": color, "gas": str(label), "count": len(sub)})
+        self._populate_pca_gas_legend(legend_rows)
 
     def _selected_preprocess_segment_id(self) -> Optional[int]:
         row = self.pre_segments_table.currentRow()
