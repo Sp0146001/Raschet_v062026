@@ -5,6 +5,8 @@ from typing import Dict, Iterable, List, Tuple
 import numpy as np
 import pandas as pd
 
+from raschet_app.services.pca_covariance import compute_covariance_matrix, covariance_matrix_to_table
+
 
 SCALE_MODES = {
     "Без масштабирования": "none",
@@ -34,6 +36,8 @@ def run_pca(feature_df: pd.DataFrame, scale_mode: str) -> Dict[str, pd.DataFrame
         raise ValueError("Для PCA нужно как минимум два набора признаков.")
 
     X, mean, std = apply_scaling(feature_df, scale_mode)
+    scaled_df = pd.DataFrame(X, index=feature_df.index, columns=feature_df.columns)
+    covariance = compute_covariance_matrix(scaled_df)
     U, S, VT = np.linalg.svd(X, full_matrices=False)
 
     n_samples = X.shape[0]
@@ -65,4 +69,5 @@ def run_pca(feature_df: pd.DataFrame, scale_mode: str) -> Dict[str, pd.DataFrame
         "scores": scores_df,
         "loadings": loadings_df,
         "means": means_df,
+        "covariance": covariance_matrix_to_table(covariance.matrix),
     }

@@ -407,9 +407,12 @@ class RaschetMainWindow(QMainWindow):
         TableUtils.setup_table(self.pca_scores_table)
         self.pca_loadings_table = QTableWidget()
         TableUtils.setup_table(self.pca_loadings_table)
+        self.pca_covariance_table = QTableWidget()
+        TableUtils.setup_table(self.pca_covariance_table)
 
         for title, table in [
             ("Значения признаков", self.features_values_table),
+            ("PCA: ковариация", self.pca_covariance_table),
             ("PCA: дисперсия", self.pca_variance_table),
             ("PCA: scores", self.pca_scores_table),
             ("PCA: loadings", self.pca_loadings_table),
@@ -1186,6 +1189,8 @@ class RaschetMainWindow(QMainWindow):
             TableUtils.populate_from_dataframe(self.pca_variance_table, pd.DataFrame(), index_visible=False)
             TableUtils.populate_from_dataframe(self.pca_scores_table, pd.DataFrame(), index_visible=False)
             TableUtils.populate_from_dataframe(self.pca_loadings_table, pd.DataFrame(), index_visible=False)
+            if hasattr(self, "pca_covariance_table"):
+                TableUtils.populate_from_dataframe(self.pca_covariance_table, pd.DataFrame(), index_visible=False)
             self.pca_plot_widget.clear()
             return
         sets_df_raw = self.db.list_feature_sets()
@@ -1335,6 +1340,7 @@ class RaschetMainWindow(QMainWindow):
             return
 
         scores_df = pd.concat([meta_df[["id", "feature_set_name", "segment_name", "gas_name", "temperature_c", "light_mode"]].reset_index(drop=True), result["scores"].reset_index(drop=True)], axis=1)
+        TableUtils.populate_from_dataframe(self.pca_covariance_table, result["covariance"], index_visible=False)
         TableUtils.populate_from_dataframe(self.pca_variance_table, result["variance"], index_visible=False)
         TableUtils.populate_from_dataframe(self.pca_scores_table, scores_df, index_visible=False)
         TableUtils.populate_from_dataframe(self.pca_loadings_table, result["loadings"], index_visible=False)
